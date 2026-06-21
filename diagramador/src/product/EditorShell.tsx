@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FrameLayout } from '../engine';
+import type { Document } from '../model/types';
 import { fontRegistry } from '../fonts/font-registry';
-import { BLANK_FONT_FAMILY, BLANK_FONT_SIZE } from '../editor/blank-document';
+import { BLANK_BODY_STYLE_ID, BLANK_FONT_FAMILY, BLANK_FONT_SIZE } from '../editor/blank-document';
 import {
   addPage,
   bodyStyle,
   createInitialEditorState,
   editorStateFromProject,
   mainStory,
+  manuscriptText,
   pageTextChunks,
   setActivePage,
   setBodyStyle,
@@ -15,6 +17,9 @@ import {
   setProjectDocument,
 } from '../editor/editor-state';
 import type { EditorState } from '../editor/editor-state';
+import { tiptapJsonToPreloParagraphs } from '../editor/tiptap-adapter';
+import type { TiptapDoc } from '../editor/tiptap-adapter';
+import TiptapWritingSurface from '../editor/components/TiptapWritingSurface';
 import {
   canRedo,
   canUndo,
@@ -37,6 +42,49 @@ const ZOOM_STEP = 0.1;
 const ZOOM_MIN = 0.4;
 const ZOOM_MAX = 2.5;
 
+/**
+ * SPIKE: liga a camada de escrita Tiptap. Ligado nesta branch para avaliar; em `main` ficaria
+ * `false`. O `EditablePage` atual NÃO é destruído — o caminho `false` continua intacto.
+ */
+const USE_TIPTAP_SPIKE = true;
+
+/** Garante estilos heading-1/2/3 no documento (o adapter mapeia headings para esses ids). */
+function ensureHeadingStyles(document: Document): void {
+  const body = document.styles[BLANK_BODY_STYLE_ID];
+  if (!body) return;
+  const scales: Record<string, number> = { 'heading-1': 1.8, 'heading-2': 1.45, 'heading-3': 1.2 };
+  for (const [id, scale] of Object.entries(scales)) {
+    if (document.styles[id]) continue;
+    document.styles[id] = {
+      ...body,
+      name: id,
+      alignment: 'left',
+      spaceBefore: Math.round(body.characterStyle.fontSize * scale * 0.6),
+      spaceAfter: Math.round(body.characterStyle.fontSize * scale * 0.3),
+      keepWithNext: true,
+      characterStyle: {
+        ...body.characterStyle,
+        fontSize: Math.round(body.characterStyle.fontSize * scale),
+        fontWeight: 'bold',
+      },
+    };
+  }
+}
+
+/**
+ * Deriva um EditorState cujo manuscrito vem do JSON do Tiptap (via adapter), preservando todo o
+ * resto (páginas, frames, imagens) do Prelo. É a ÚNICA forma de o Tiptap alimentar o motor.
+ */
+function applyTiptapToState(base: EditorState, json: unknown): EditorState {
+  if (!json) return base;
+  const next = structuredClone(base);
+  const story = mainStory(next);
+  if (!story) return base;
+  story.paragraphs = tiptapJsonToPreloParagraphs(json as TiptapDoc, BLANK_BODY_STYLE_ID);
+  ensureHeadingStyles(next.project.document);
+  return next;
+}
+
 function loadInitialHistory(): History<EditorState> {
   try {
     const saved = typeof window !== 'undefined' ? loadProject(window.localStorage) : null;
@@ -58,6 +106,10 @@ export default function EditorShell() {
   const [exportStatus, setExportStatus] = useState<'idle' | 'generating' | 'ready' | 'error'>(
     'idle'
   );
+  // SPIKE: JSON do Tiptap (debounced) que alimenta o preview do Prelo.
+  const [tiptapJson, setTiptapJson] = useState<unknown | null>(null);
+  // SPIKE: conteúdo inicial do Tiptap = manuscrito atual, capturado uma vez no mount.
+  const [initialManuscript] = useState(() => manuscriptText(history.present));
 
   // Espelhos/refs para evitar closures velhas e efeitos colaterais dentro de updaters (StrictMode).
   const historyRef = useRef(history);
@@ -66,14 +118,27 @@ export default function EditorShell() {
   }, [history]);
   const draftRef = useRef<{ pageIndex: number; text: string } | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const tiptapJsonRef = useRef<unknown>(null); // SPIKE: último JSON imediato (sem debounce)
+  const tiptapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => () => {
     if (timerRef.current) clearTimeout(timerRef.current);
+    if (tiptapTimerRef.current) clearTimeout(tiptapTimerRef.current);
   }, []);
 
   const present = history.present;
   const style = bodyStyle(present);
-  const texts = pageTextChunks(present);
+  // SPIKE: a entrada do preview vem do Tiptap (quando ligado e já há JSON); senão, do estado normal.
+  const previewInputState = useMemo(
+    () => (USE_TIPTAP_SPIKE && tiptapJson ? applyTiptapToState(present, tiptapJson) : present),
+    [present, tiptapJson]
+  );
+  // SPIKE: digitação fluida no Tiptap; o Prelo só repagina após a pausa (debounce), como no editor.
+  function handleTiptapChange(json: unknown) {
+    tiptapJsonRef.current = json;
+    if (tiptapTimerRef.current) clearTimeout(tiptapTimerRef.current);
+    tiptapTimerRef.current = setTimeout(() => setTiptapJson(json), TEXT_DEBOUNCE_MS);
+  }
 
   function paginateWithEngine(state: EditorState): {
     state: EditorState;
@@ -104,9 +169,11 @@ export default function EditorShell() {
   // rodar SÓ quando o documento/estilo/algoritmo mudam de fato — e não a cada render incidental
   // (zoom, status de salvar, export). Durante a digitação (debounced) `present` não muda → 0 repaginações.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const preview = useMemo(() => paginateWithEngine(present), [present, layoutCtx]);
+  const preview = useMemo(() => paginateWithEngine(previewInputState), [previewInputState, layoutCtx]);
   const previewState = preview.state;
   const previewDoc = previewState.project.document;
+  // No spike, o texto exibido nas páginas vem do estado já paginado (derivado do Tiptap).
+  const texts = USE_TIPTAP_SPIKE ? pageTextChunks(previewState) : pageTextChunks(present);
 
   function clearTimer() {
     if (timerRef.current) {
@@ -218,7 +285,12 @@ export default function EditorShell() {
   // ── Exportar PDF (via adapter → motor estável) ───────────
   async function handleExportPdf() {
     flushDraft();
-    const project = paginateWithEngine(historyRef.current.present).state.project;
+    // No spike, o PDF exporta o conteúdo escrito no Tiptap (via adapter), não o `present` base.
+    const baseState =
+      USE_TIPTAP_SPIKE && tiptapJsonRef.current
+        ? applyTiptapToState(historyRef.current.present, tiptapJsonRef.current)
+        : historyRef.current.present;
+    const project = paginateWithEngine(baseState).state.project;
     setExportStatus('generating');
     try {
       await fontRegistry.loadFont(BLANK_FONT_FAMILY, EDITOR_FONT_URL);
@@ -275,28 +347,67 @@ export default function EditorShell() {
         onZoomReset={handleZoomReset}
       />
       <div className="editor-body">
-        <PageSidebar
-          pageCount={previewDoc.pages.length}
-          activeIndex={present.activePageIndex}
-          onSelect={handleSelectPage}
-          onAddPage={handleAddPage}
-        />
-        {previewDoc.pages.length > 0 ? (
-          <EditorWorkspace
-            pages={previewDoc.pages}
-            frames={previewDoc.frames}
-            frameLayoutsByFrameId={preview.frameLayoutsByFrameId}
-            texts={texts}
-            activePageIndex={present.activePageIndex}
-            style={style}
-            zoom={zoom}
-            pageRevision={pageRevision}
-            onSelectPage={handleSelectPage}
-            onTextInput={handleTextInput}
-            onTextCommit={handleTextCommit}
-          />
+        {USE_TIPTAP_SPIKE ? (
+          // SPIKE: escrita no Tiptap (esquerda) + PROVA paginada do Prelo (direita).
+          // A prova é read-only (handlers no-op): a fonte da verdade do texto é o Tiptap,
+          // e a fonte da verdade do layout/PDF continua sendo o Prelo.
+          <div className="tiptap-spike-pane">
+            <div className="tiptap-spike-write">
+              <span className="spike-label">Escrita — Tiptap (spike)</span>
+              <TiptapWritingSurface
+                initialText={initialManuscript}
+                onChangeJson={handleTiptapChange}
+              />
+            </div>
+            <div className="tiptap-spike-preview">
+              <span className="spike-label" style={{ padding: '8px 0 0 16px' }}>
+                Prova paginada — Prelo (preview = PDF)
+              </span>
+              {previewDoc.pages.length > 0 ? (
+                <EditorWorkspace
+                  pages={previewDoc.pages}
+                  frames={previewDoc.frames}
+                  frameLayoutsByFrameId={preview.frameLayoutsByFrameId}
+                  texts={texts}
+                  activePageIndex={Math.min(present.activePageIndex, previewDoc.pages.length - 1)}
+                  style={style}
+                  zoom={zoom}
+                  pageRevision={pageRevision}
+                  onSelectPage={() => {}}
+                  onTextInput={() => {}}
+                  onTextCommit={() => {}}
+                />
+              ) : (
+                <div className="editor-workspace" />
+              )}
+            </div>
+          </div>
         ) : (
-          <div className="editor-workspace" />
+          <>
+            <PageSidebar
+              pageCount={previewDoc.pages.length}
+              activeIndex={present.activePageIndex}
+              onSelect={handleSelectPage}
+              onAddPage={handleAddPage}
+            />
+            {previewDoc.pages.length > 0 ? (
+              <EditorWorkspace
+                pages={previewDoc.pages}
+                frames={previewDoc.frames}
+                frameLayoutsByFrameId={preview.frameLayoutsByFrameId}
+                texts={texts}
+                activePageIndex={present.activePageIndex}
+                style={style}
+                zoom={zoom}
+                pageRevision={pageRevision}
+                onSelectPage={handleSelectPage}
+                onTextInput={handleTextInput}
+                onTextCommit={handleTextCommit}
+              />
+            ) : (
+              <div className="editor-workspace" />
+            )}
+          </>
         )}
       </div>
     </div>
