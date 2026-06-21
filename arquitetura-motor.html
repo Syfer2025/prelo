@@ -1,0 +1,1183 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prelo — Central de Dados & Arquitetura do Motor</title>
+<!-- Google Fonts: Inter para UI e Lora para estilo editorial tipográfico -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Lora:ital,wght@0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f9f8f6;
+    --card: #ffffff;
+    --ink: #1c1a17;
+    --soft: #6e675f;
+    --line: #e6e1d8;
+    --accent: #a0491e;
+    --accent-soft: #fbeee6;
+    --ok: #256b43;
+    --ok-soft: #eaf5ee;
+    --warn: #94640d;
+    --warn-soft: #fbf5e6;
+    --danger: #9e2a2b;
+    --danger-soft: #fbeeed;
+    --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --serif: "Lora", Georgia, serif;
+  }
+  
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--sans);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  
+  .wrap {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 60px 24px 120px;
+  }
+  
+  header.top {
+    border-bottom: 2px solid var(--ink);
+    padding-bottom: 28px;
+    margin-bottom: 32px;
+  }
+  
+  .logo-area {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 8px;
+  }
+  
+  .logo-badge {
+    background: var(--accent);
+    color: #ffffff;
+    font-family: var(--serif);
+    font-weight: 700;
+    font-size: 20px;
+    padding: 2px 12px;
+    border-radius: 4px;
+    letter-spacing: 0.05em;
+  }
+  
+  .kicker {
+    font-size: 11px;
+    letter-spacing: .15em;
+    text-transform: uppercase;
+    color: var(--accent);
+    font-weight: 700;
+  }
+  
+  h1 {
+    font-family: var(--serif);
+    font-size: 38px;
+    line-height: 1.15;
+    margin: 0.2em 0 0.15em;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+  
+  .sub {
+    color: var(--soft);
+    font-size: 18px;
+    font-family: var(--serif);
+    font-style: italic;
+    max-width: 72ch;
+    margin: 0;
+  }
+  
+  h2 {
+    font-family: var(--serif);
+    font-size: 26px;
+    margin: 48px 0 16px;
+    letter-spacing: -0.01em;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 8px;
+  }
+  
+  h2 .n {
+    color: var(--accent);
+    font-family: var(--mono);
+    font-size: 18px;
+    font-variant-numeric: tabular-nums;
+    margin-right: .5em;
+    border: 1px solid var(--line);
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: #ffffff;
+  }
+  
+  h3 {
+    font-size: 16px;
+    margin: 24px 0 12px;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: var(--accent);
+    font-weight: 700;
+  }
+  
+  p { margin: 0.8em 0; }
+  .lead { font-size: 17px; line-height: 1.7; color: #2c2924; }
+  
+  code {
+    font-family: var(--mono);
+    font-size: .88em;
+    background: var(--accent-soft);
+    color: #8c3b12;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-weight: 500;
+  }
+  
+  a.file-link {
+    font-family: var(--mono);
+    font-size: .88em;
+    color: var(--accent);
+    text-decoration: none;
+    border-bottom: 1px dashed var(--accent);
+  }
+  a.file-link:hover {
+    background: var(--accent-soft);
+    border-bottom-style: solid;
+  }
+  
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 24px;
+    margin: 18px 0;
+    box-shadow: 0 4px 12px rgba(28,26,23, 0.02);
+  }
+  
+  .grid {
+    display: grid;
+    gap: 18px;
+  }
+  @media(min-width:768px){
+    .grid.two { grid-template-columns: 1fr 1fr; }
+    .grid.three { grid-template-columns: 1fr 1fr 1fr; }
+    .grid.four { grid-template-columns: 1fr 1fr 1fr 1fr; }
+    .grid.twothirds { grid-template-columns: 2fr 1fr; }
+  }
+  
+  .pill {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    padding: 3px 10px;
+    border-radius: 999px;
+  }
+  .pill.ok { background: var(--ok-soft); color: var(--ok); } 
+  .pill.warn { background: var(--warn-soft); color: var(--warn); } 
+  .pill.hard { background: var(--danger-soft); color: var(--danger); }
+  
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    font-size: 14px;
+  }
+  th, td {
+    text-align: left;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: middle;
+  }
+  th {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: var(--soft);
+    font-weight: 700;
+    background: #fbfbfb;
+  }
+  tr:hover td {
+    background-color: #faf9f6;
+  }
+  tr.header-row th {
+    background-color: #f3efe6;
+    border-bottom: 2px solid var(--line);
+  }
+  
+  .flow-diagram {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 20px;
+    margin: 24px 0;
+  }
+  .flow-step {
+    flex: 1;
+    min-width: 110px;
+    background: #fdfdfd;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 12px 8px;
+    text-align: center;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.01);
+  }
+  .flow-step.active {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+  .flow-step b {
+    display: block;
+    font-size: 13px;
+    color: var(--ink);
+  }
+  .flow-step small {
+    display: block;
+    font-size: 11px;
+    color: var(--soft);
+    margin-top: 4px;
+  }
+  .flow-arrow {
+    font-weight: bold;
+    color: var(--accent);
+    font-size: 18px;
+  }
+  
+  ul, ol {
+    margin: .5em 0;
+    padding-left: 1.4em;
+  }
+  li {
+    margin: .4em 0;
+  }
+  
+  .box-alert {
+    padding: 16px 20px;
+    border-radius: 8px;
+    margin: 16px 0;
+    border-left: 4px solid var(--accent);
+  }
+  .box-alert.note {
+    border-left-color: var(--accent);
+    background: var(--accent-soft);
+  }
+  .box-alert.risk {
+    border-left-color: var(--danger);
+    background: var(--danger-soft);
+  }
+  .box-alert.ok {
+    border-left-color: var(--ok);
+    background: var(--ok-soft);
+  }
+  
+  .module-tag {
+    font-family: var(--mono);
+    font-size: 11px;
+    background: #f0ede6;
+    color: var(--soft);
+    padding: 2px 6px;
+    border-radius: 4px;
+    display: inline-block;
+  }
+  
+  .phase-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .phase-item {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--card);
+    overflow: hidden;
+  }
+  .phase-header {
+    background: #f7f5ef;
+    padding: 12px 18px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid var(--line);
+  }
+  .phase-header h4 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .phase-body {
+    padding: 18px;
+  }
+  
+  footer {
+    margin-top: 80px;
+    padding-top: 24px;
+    border-top: 1px solid var(--line);
+    color: var(--soft);
+    font-size: 13px;
+    display: flex;
+    justify-content: space-between;
+  }
+  
+  /* Status Panel Dashboard */
+  .stat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+  .stat-card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 16px;
+    text-align: center;
+  }
+  .stat-val {
+    font-family: var(--mono);
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--accent);
+    margin-bottom: 4px;
+  }
+  .stat-label {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--soft);
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header class="top">
+  <div class="logo-area">
+    <span class="logo-badge">PRELO</span>
+    <span class="kicker">Central de Dados & Plano de Desenvolvimento</span>
+  </div>
+  <h1>Motor de Diagramação e Composição Tipográfica</h1>
+  <p class="sub">Um motor de editoração eletrônica (DTP) profissional e independente do DOM para livros físicos impressos e layouts fixos digitais.</p>
+</header>
+
+<div class="stat-grid">
+  <div class="stat-card">
+    <div class="stat-val" style="color: var(--warn)">FASE 0R</div>
+    <div class="stat-label">Fundação Revalidada</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-val">45 testes</div>
+    <div class="stat-label">Base Coberta por Testes</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-val" style="font-size: 16px; padding: 5px 0;">Vite + React + TS</div>
+    <div class="stat-label">Stack Base Ativa</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-val" style="font-size: 16px; padding: 5px 0; color: var(--ok)"><a href="http://localhost:5174" target="_blank" style="color: inherit; text-decoration: none;">http://localhost:5174</a></div>
+    <div class="stat-label">Dev Server Local</div>
+  </div>
+</div>
+
+<p class="lead">
+  O projeto <b>Prelo</b> nasceu da necessidade de um motor de diagramação extremamente robusto no navegador. Ao contrário de editores comuns baseados em HTML/CSS fluido, o Prelo trabalha sob o princípio de <b>páginas de tamanho fixo com posicionamento absoluto e renderização vetorial própria</b> (estilo InDesign/Figma). O objetivo técnico é que o layout físico calculado pelo motor alimente tanto o preview quanto o PDF final, sem depender do DOM como fonte da verdade.
+</p>
+
+<div class="box-alert note">
+  <h4 style="margin:0 0 8px 0; font-family: var(--serif); font-size: 18px;">Marco Revisado: Fundação TypeScript Revalidada</h4>
+  <p style="margin:0; font-size: 14.5px;">
+    O protótipo foi estabilizado para compilar com TypeScript estrito, passar lint e iniciar uma suíte de testes automatizados do motor. A base atual valida fluxo entre frames, overflow, quebra greedy sem espaços finais, contrato real do <code>tex-linebreak</code>, caminho KP sem fallback silencioso, preservação de espaços no refluxo sem quebrar fragmentos hifenizados, <code>flowStory(document, storyId)</code> com cadeia de frames por ID, conversão física pt/mm/pol, geometria de página derivada de perfil de impressão em pontos PostScript, caixas físicas de PDF, resolução de frames do <code>flowStory()</code> a partir da geometria física (<code>rectOnTrim</code>) com layout estável ao alterar o bleed, coordenadas físicas absolutas por frame na saída (<code>rectOnPage</code> = TrimBox + rectOnTrim), leading vindo de <code>ParagraphStyle.lineHeight</code> (multiplicador) no Frame Filler, e margem mínima KDP com bleed. Recursos declarados apenas no modelo continuam marcados como arquitetura, não como implementação final.
+  </p>
+</div>
+
+<div class="box-alert risk">
+  <h4 style="margin:0 0 8px 0; font-family: var(--serif); font-size: 18px;">Regra de Direção: Livro Físico Primeiro</h4>
+  <p style="margin:0; font-size: 14.5px;">
+    A próxima etapa não é UI visual nem editor WYSIWYG no Canvas. O caminho correto é consolidar unidades físicas, composição tipográfica determinística, export PDF com caixas Trim/Bleed/Media, fontes embutidas e preflight. O Canvas deve continuar sendo preview de uma geometria de impressão calculada pelo motor.
+  </p>
+</div>
+
+<h2 id="progresso">Progresso do Motor <span style="font-size:13px;font-weight:400;color:var(--soft);font-family:var(--sans);">— snapshot jun/2026 · 45 testes verdes</span></h2>
+
+<div class="stat-grid">
+  <div class="stat-card">
+    <div class="stat-val">~65%</div>
+    <div class="stat-label">Núcleo do motor (texto)</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-val">~15%</div>
+    <div class="stat-label">Produto completo</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-val">41</div>
+    <div class="stat-label">Testes verdes</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-val" style="color: var(--danger)">0 / 2</div>
+    <div class="stat-label">Riscos maiores resolvidos</div>
+  </div>
+</div>
+
+<div class="card" style="padding:20px 24px;">
+  <div style="display:flex;gap:18px;flex-wrap:wrap;font-size:12px;color:var(--soft);margin-bottom:16px;">
+    <span style="display:flex;align-items:center;gap:6px;"><span style="width:11px;height:11px;border-radius:3px;background:var(--ok);"></span>sólido / testado</span>
+    <span style="display:flex;align-items:center;gap:6px;"><span style="width:11px;height:11px;border-radius:3px;background:var(--warn);"></span>parcial</span>
+    <span style="display:flex;align-items:center;gap:6px;"><span style="width:11px;height:11px;border-radius:3px;background:#c9c5bb;"></span>não começado</span>
+  </div>
+  <div id="prelo-progress" style="display:flex;flex-direction:column;gap:11px;"></div>
+  <p style="margin:16px 0 0;font-size:12px;color:var(--soft);">Percentuais são julgamento (faixa ±5%), não medição exata. Atualizar a cada rodada junto com a contagem de testes. Os dois riscos que definem o sucesso — export PDF/CMYK e text-wrap de imagem — seguem em 0%.</p>
+</div>
+
+<script>
+(function () {
+  const rows = [
+    ['Runs posicionados + justificação', 85, 'ok', '↑ era 5%'],
+    ['Fluxo de texto entre frames', 75, 'ok', ''],
+    ['Composição de texto (quebra, hifenização)', 70, 'ok', ''],
+    ['Estilos de parágrafo (entrelinha, espaço, alinhamento, recuo)', 80, 'ok', ''],
+    ['Geometria física (trim, sangria, pontos, perfis)', 55, 'warn', ''],
+    ['Métricas de fonte (opentype.js; sem HarfBuzz)', 30, 'warn', ''],
+    ['Páginas automáticas / master pages / imagens', 5, 'no', ''],
+    ['Preflight real (validar contra a gráfica)', 5, 'no', ''],
+    ['Export PDF — e CMYK / PDF-X', 30, 'warn', 'RGB ponta a ponta; falta fonte/CMYK'],
+    ['Text-wrap em imagens (o diferencial)', 0, 'no', ''],
+    ['Editor visual (arrastar, WYSIWYG)', 0, 'no', ''],
+  ];
+  const colors = { ok: 'var(--ok)', warn: 'var(--warn)', no: '#c9c5bb' };
+  document.getElementById('prelo-progress').innerHTML = rows.map(function (r) {
+    var label = r[0], pct = r[1], color = colors[r[2]], note = r[3];
+    return '<div style="display:grid;grid-template-columns:minmax(0,260px) 1fr 86px;align-items:center;gap:14px;">'
+      + '<div style="font-size:13.5px;color:var(--ink);min-width:0;">' + label + '</div>'
+      + '<div style="height:9px;background:var(--line);border-radius:999px;overflow:hidden;"><div style="height:100%;width:' + pct + '%;background:' + color + ';border-radius:999px;"></div></div>'
+      + '<div style="font-size:13px;color:var(--soft);text-align:right;">' + pct + '%' + (note ? ' <span style="font-size:11px;color:var(--accent);">' + note + '</span>' : '') + '</div>'
+      + '</div>';
+  }).join('');
+})();
+</script>
+
+<h2><span class="n">1</span>O Princípio Central: Story ≠ Frame</h2>
+<div class="card">
+  <p style="margin-top:0">
+    A arquitetura tipográfica herdada dos grandes DTPs (como InDesign e QuarkXPress) baseia-se na separação estrita entre conteúdo e geometria:
+  </p>
+  <ul>
+    <li><b>Story (Fluxo de Conteúdo)</b>: O texto contínuo, estruturado em parágrafos e spans com estilos aplicados. A Story não sabe onde reside fisicamente; ela é apenas um fluxo de dados com metadados tipográficos.</li>
+    <li><b>Frame (Caixa de Exibição)</b>: Um polígono físico posicionado em uma página (x, y, largura, altura, rotação). Os frames funcionam como janelas que "capturam" e revelam partes da Story.</li>
+    <li><b>Cadeia de Encadeamento (Frame Chain)</b>: Os frames de texto podem ser encadeados. Quando o texto de uma Story enche o <i>Frame 1</i>, a máquina de estados do motor calcula o ponto de corte geométrico exato e envia o texto remanescente para o <i>Frame 2</i>, depois para o <i>Frame 3</i>, propagando-se por diferentes páginas.</li>
+  </ul>
+</div>
+
+<h2><span class="n">2</span>O Pipeline de Composição (Engine)</h2>
+<p>O fluxo de processamento de texto do Prelo é dividido em etapas unidirecionais:</p>
+
+<div class="flow-diagram">
+  <div class="flow-step active">
+    <b>1. Tokenizer</b>
+    <small>Separa palavras, espaços, quebras e preserva estilos inline.</small>
+  </div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-step active">
+    <b>2. Shaper</b>
+    <small>Mede avanços via função injetada; fonte binária real ainda é etapa seguinte.</small>
+  </div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-step active">
+    <b>3. Line Breaker</b>
+    <small>Calcula quebras greedy ou KP; a distribuição visual dos espaços ainda falta.</small>
+  </div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-step active">
+    <b>4. Frame Filler</b>
+    <small>State Machine posiciona linhas e faz refluxo entre frames.</small>
+  </div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-step active">
+    <b>5. Canvas Preview</b>
+    <small>Renderiza coordenadas absolutas na tela; PDF físico é fase separada.</small>
+  </div>
+</div>
+
+<div class="grid two">
+  <div class="card">
+    <h3 style="margin-top:0">Como Funciona Hoje (Fase 0R/Fase 1 inicial)</h3>
+    <p>O motor ainda aceita texto bruto via <code>flowText()</code>, mas agora também possui a primeira API de documento: <code>flowStory(document, storyId)</code>. Essa API resolve a <code>Story</code>, aplica estilos de parágrafo e respeita a ordem declarada em <code>Story.frameChainIds</code>. A camada <code>print-units.ts</code> deriva trim, bleed e margens mínimas em pontos PostScript, e <code>physical-geometry.ts</code> normaliza o documento em páginas com MediaBox/BleedBox/TrimBox e frames relativos ao trim. O <code>flowStory()</code> já consome essa geometria: os frames do layout são resolvidos por <code>framesFromPhysicalGeometry()</code> a partir de <code>rectOnTrim</code> (pontos, relativo ao trim), de modo que o bleed não desloca o texto. A saída do layout já inclui o posicionamento físico absoluto de cada frame (<code>rectOnPage</code> = TrimBox + rectOnTrim, via <code>frameRectOnPage()</code>) e o leading de cada linha vem do <code>ParagraphStyle.lineHeight</code> (multiplicador). O Frame Filler também honra <code>spaceBefore</code>/<code>spaceAfter</code>, o alinhamento <code>left</code>/<code>center</code>/<code>right</code>/<code>justify</code> e o <code>indent</code> de primeira linha, além de quebrar por caractere palavras maiores que o frame. Cada linha já emite <code>runs</code> posicionados (<code>{ text, x, width, style }</code>); a justificação estica os espaços (menos na última linha) e o canvas desenha run a run. Próximo grande salto: <b>exportar PDF</b> (RGB) a partir desses runs + caixas físicas. Ainda faltam o PDF em si, CMYK/PDF-X (server-side), text-wrap de imagem e o editor visual.</p>
+  </div>
+  <div class="card">
+    <h3 style="margin-top:0">Evolução (Fase 1)</h3>
+    <p>O Shaper passará a extrair métricas diretamente dos arquivos binários de fontes TTF/OTF via <code>opentype.js</code>, com critério explícito para migrar a HarfBuzz/rustybuzz se a cobertura tipográfica não for suficiente. O <code>tex-linebreak</code> já está ligado ao caminho KP para calcular breakpoints; a próxima lacuna é transformar essas quebras em runs posicionados e aplicar distribuição real de espaços na renderização. O <code>hypher</code> continuará responsável por pontos de hifenização específicos para português brasileiro (pt-BR).</p>
+  </div>
+</div>
+
+<h2><span class="n">3</span>Mapa de Módulos & Código Fonte</h2>
+<p>Os módulos ativos estão estruturados no diretório de desenvolvimento. Use os links abaixo para abrir e inspecionar os arquivos diretamente no editor:</p>
+
+<table>
+  <thead>
+    <tr class="header-row">
+      <th>Módulo</th>
+      <th>Caminho do Arquivo</th>
+      <th>Escopo e Função</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><b>Modelo de Dados</b></td>
+      <td><a class="file-link" href="file:///Users/alexmeiradossantos/Desktop/pasta%20sem%20t%C3%ADtulo/diagramador/src/model/types.ts">src/model/types.ts</a></td>
+      <td>Contém a declaração de tipos estruturais (Document, Story, Page, Frame, Styles, Presets, etc.) cobrindo os 22 requisitos.</td>
+    </tr>
+    <tr>
+      <td><b>Tokenizer</b></td>
+      <td><a class="file-link" href="file:///Users/alexmeiradossantos/Desktop/pasta%20sem%20t%C3%ADtulo/diagramador/src/engine/tokenizer.ts">src/engine/tokenizer.ts</a></td>
+      <td>Transforma spans de texto em um fluxo tipado de tokens estruturados (WORD, SPACE, NEWLINE), preservando estilos por token.</td>
+    </tr>
+    <tr>
+      <td><b>Shaper</b></td>
+      <td><a class="file-link" href="file:///Users/alexmeiradossantos/Desktop/pasta%20sem%20t%C3%ADtulo/diagramador/src/engine/shaper.ts">src/engine/shaper.ts</a></td>
+      <td>Calcula largura e métricas tipográficas de palavras e espaçamentos com base na fonte. Suporta injeção de função de medição.</td>
+    </tr>
+    <tr>
+      <td><b>Máquina de Estados</b></td>
+      <td><a class="file-link" href="file:///Users/alexmeiradossantos/Desktop/pasta%20sem%20t%C3%ADtulo/diagramador/src/engine/frame-filler.ts">src/engine/frame-filler.ts</a></td>
+      <td>O core do refluxo. Aloca linhas, calcula alturas, executa quebra de caractere quando a palavra é maior que o frame e redistribui o fluxo nos frames vinculados.</td>
+    </tr>
+    <tr>
+      <td><b>Fachada da Engine</b></td>
+      <td><a class="file-link" href="file:///Users/alexmeiradossantos/Desktop/pasta%20sem%20t%C3%ADtulo/diagramador/src/engine/index.ts">src/engine/index.ts</a></td>
+      <td>Expõe <code>flowText()</code> para a demo e <code>flowStory(document, storyId)</code> como primeira API de documento, unificando tokenizer, shaper e frame filler.</td>
+    </tr>
+    <tr>
+      <td><b>Canvas Renderer</b></td>
+      <td><a class="file-link" href="file:///Users/alexmeiradossantos/Desktop/pasta%20sem%20t%C3%ADtulo/diagramador/src/render/canvas-renderer.ts">src/render/canvas-renderer.ts</a></td>
+      <td>Módulo de renderização puro. Recebe o resultado geométrico do motor e desenha na tela (linhas, limites dos frames, fios de encadeamento e o aviso de overflow).</td>
+    </tr>
+    <tr>
+      <td><b>Componente Canvas</b></td>
+      <td><a class="file-link" href="file:///Users/alexmeiradossantos/Desktop/pasta%20sem%20t%C3%ADtulo/diagramador/src/components/Canvas.tsx">src/components/Canvas.tsx</a></td>
+      <td>Hospeda o elemento HTML Canvas no React, tratando o redimensionamento dinâmico e o DPI Retina físico do monitor.</td>
+    </tr>
+    <tr>
+      <td><b>Interface Web (UI)</b></td>
+      <td><a class="file-link" href="file:///Users/alexmeiradossantos/Desktop/pasta%20sem%20t%C3%ADtulo/diagramador/src/App.tsx">src/App.tsx</a></td>
+      <td>Painel principal de controle. Contém o editor em tempo real, visualização de estatísticas físicas (linhas, transbordos) e representação visual das etapas do motor.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2><span class="n">4</span>Os 22 Requisitos de Diagramação Profissional</h2>
+<p>Os requisitos abaixo foram mapeados no modelo de dados. O status <b>Arquitetado</b> significa que existe contrato/schema; <b>Implementado</b> deve ser reservado a comportamento calculado, renderizado, testado e futuramente exportado no PDF.</p>
+
+<table>
+  <thead>
+    <tr class="header-row">
+      <th>Nº</th>
+      <th>Requisito</th>
+      <th>Prioridade</th>
+      <th>Status Atual</th>
+      <th>Mapeamento Técnico / Abordagem</th>
+    </tr>
+  </thead>
+  <tbody>
+    <!-- Essenciais -->
+    <tr>
+      <td>1</td>
+      <td><b>Páginas de tamanho fixo</b></td>
+      <td><span class="pill ok">Essencial</span></td>
+      <td><span class="pill ok">Implementado</span></td>
+      <td>Modelado em <code>Page.width/height</code>. A fundação agora inclui conversões explícitas para pontos PostScript (72pt = 1in), evitando tratar pixels de tela como unidade física final.</td>
+    </tr>
+    <tr>
+      <td>2</td>
+      <td><b>Fluxo de texto encadeado</b></td>
+      <td><span class="pill ok">Essencial</span></td>
+      <td><span class="pill ok">Implementado</span></td>
+      <td>Processado em <code>frame-filler.ts</code> e exposto por <code>flowStory(document, storyId)</code>, com resolução inicial de <code>Story.frameChainIds</code>. Colunas, padding e ordem física de páginas ainda precisam evoluir.</td>
+    </tr>
+    <tr>
+      <td>3</td>
+      <td><b>Contorno de texto (Text-wrap)</b></td>
+      <td><span class="pill ok">Essencial</span></td>
+      <td><span class="pill warn">Arquitetado</span></td>
+      <td>Representado por <code>TextWrapConfig</code> (bounding-box, polígono manual, alpha-channel). O spike estrutural foi antecipado para a Fase 3.</td>
+    </tr>
+    <tr>
+      <td>4</td>
+      <td><b>Estilos de parágrafo</b></td>
+      <td><span class="pill ok">Essencial</span></td>
+      <td><span class="pill warn">Modelado</span></td>
+      <td>Objeto <code>ParagraphStyle</code> modelado. A aplicação real de alinhamento, recuos, capitulares, tabulações, viúvas/órfãs e keep rules ainda precisa entrar no motor.</td>
+    </tr>
+    <tr>
+      <td>5</td>
+      <td><b>Estilos de caractere</b></td>
+      <td><span class="pill ok">Essencial</span></td>
+      <td><span class="pill warn">Modelado</span></td>
+      <td>Objeto <code>CharacterStyle</code> modelado e preservado em tokens. A renderização final de small caps, baseline shift, sublinhado avançado e features OpenType ainda depende do shaper/renderizador final.</td>
+    </tr>
+    <tr>
+      <td>6</td>
+      <td><b>Inserir/posicionar imagens</b></td>
+      <td><span class="pill ok">Essencial</span></td>
+      <td><span class="pill warn">Arquitetado</span></td>
+      <td>Mapeado em <code>ImageFrame</code> com suporte a cropping, fit modes, posicionamento e escala absoluta.</td>
+    </tr>
+    <tr>
+      <td>7</td>
+      <td><b>Margens e sangria (Bleed)</b></td>
+      <td><span class="pill ok">Essencial</span></td>
+      <td><span class="pill ok">Implementado</span></td>
+      <td>Modelado em <code>Page.margins</code> (Margins) e <code>Page.bleed</code>. Desenhado com guias visuais no Canvas Renderer.</td>
+    </tr>
+    <tr>
+      <td>8</td>
+      <td><b>Exportar PDF para gráfica</b></td>
+      <td><span class="pill ok">Essencial</span></td>
+      <td><span class="pill warn">Arquitetado</span></td>
+      <td>Estruturado com base em perfis de gráfica. O primeiro spike de PDF físico e preflight foi antecipado para a Fase 2.</td>
+    </tr>
+    <tr>
+      <td>9</td>
+      <td><b>Número de página automático</b></td>
+      <td><span class="pill ok">Essencial</span></td>
+      <td><span class="pill warn">Arquitetado</span></td>
+      <td>Modelado no tipo <code>TextVariable</code>. Substituído em tempo de layout na renderização da Master Page.</td>
+    </tr>
+    <tr>
+      <td>10</td>
+      <td><b>Undo/Redo</b></td>
+      <td><span class="pill ok">Essencial</span></td>
+      <td><span class="pill hard">Pendente</span></td>
+      <td>Lógica de comandos estruturada com transações/commands. Deve entrar depois do motor físico e export, não antes.</td>
+    </tr>
+    <!-- Importantes -->
+    <tr>
+      <td>11</td>
+      <td><b>Baseline grid</b></td>
+      <td><span class="pill warn">Importante</span></td>
+      <td><span class="pill warn">Arquitetado</span></td>
+      <td>Modelado no Documento via <code>BaselineGridConfig</code> para alinhar o Y das linhas a uma grade de referência vertical.</td>
+    </tr>
+    <tr>
+      <td>12</td>
+      <td><b>Páginas espelhadas</b></td>
+      <td><span class="pill warn">Importante</span></td>
+      <td><span class="pill warn">Arquitetado</span></td>
+      <td>Modelado via boolean <code>facingPages</code> no Documento e <code>side: 'left' | 'right'</code> em cada página física.</td>
+    </tr>
+    <tr>
+      <td>13</td>
+      <td><b>Master Pages</b></td>
+      <td><span class="pill warn">Importante</span></td>
+      <td><span class="pill warn">Arquitetado</span></td>
+      <td>Objeto <code>MasterPage</code> que carrega quadros padrão e variáveis tipográficas herdadas pelas páginas associadas.</td>
+    </tr>
+    <tr>
+      <td>14</td>
+      <td><b>Quebras de parágrafo</b></td>
+      <td><span class="pill warn">Importante</span></td>
+      <td><span class="pill warn">Arquitetado</span></td>
+      <td>Mapeado em <code>ParagraphStyle.keepWithNext</code>, <code>pageBreakBefore</code>, <code>keepLinesTogether</code>, <code>orphans</code> e <code>widows</code>. Controla o isolamento de linhas e quebras pelo frame filler.</td>
+    </tr>
+    <tr>
+      <td>15</td>
+      <td><b>Sumário automático (TOC)</b></td>
+      <td><span class="pill warn">Importante</span></td>
+      <td><span class="pill warn">Arquitetado</span></td>
+      <td>Atributo <code>tocLevel</code> nos estilos de parágrafo para extrair <code>TocEntry</code> durante o processamento do texto.</td>
+    </tr>
+    <tr>
+      <td>16</td>
+      <td><b>Validação de DPI de imagem</b></td>
+      <td><span class="pill warn">Importante</span></td>
+      <td><span class="pill warn">Arquitetado</span></td>
+      <td>Dados de <code>originalWidth/Height</code> comparados ao tamanho físico no canvas para determinar resolução final.</td>
+    </tr>
+    <tr>
+      <td>17</td>
+      <td><b>Zoom e Pan interativos</b></td>
+      <td><span class="pill warn">Importante</span></td>
+      <td><span class="pill hard">Pendente</span></td>
+      <td>Transformações de matriz 2D aplicadas sobre o canvas de edição. Deve entrar junto com a fase de edição visual, após motor/PDF/text-wrap.</td>
+    </tr>
+    <tr>
+      <td>18</td>
+      <td><b>Fontes customizadas</b></td>
+      <td><span class="pill warn">Importante</span></td>
+      <td><span class="pill warn">Arquitetado</span></td>
+      <td>Controle no <code>Document</code> associado a uploads de binários (.ttf/.otf) que serão lidos pelo Shaper.</td>
+    </tr>
+    <!-- Bônus -->
+    <tr>
+      <td>19</td>
+      <td><b>Perfis de gráfica (Presets)</b></td>
+      <td><span class="pill hard">Bônus</span></td>
+      <td><span class="pill ok">Implementado</span></td>
+      <td>Presets iniciais definidos. O preset KDP com bleed foi corrigido para margem externa/top/bottom mínima de 0.375". Todos os perfis ainda devem ser versionados contra documentação oficial e validados em preflight/upload.</td>
+    </tr>
+    <tr>
+      <td>20</td>
+      <td><b>Visualizador de layout</b></td>
+      <td><span class="pill hard">Bônus</span></td>
+      <td><span class="pill warn">Arquitetado</span></td>
+      <td>Visualização física em duas páginas com folha de papel simulada no canvas.</td>
+    </tr>
+    <tr>
+      <td>21</td>
+      <td><b>Cálculo de lombada dinâmico</b></td>
+      <td><span class="pill hard">Bônus</span></td>
+      <td><span class="pill warn">Arquitetado</span></td>
+      <td>Mapeado via <code>spineFormula</code> no PrintProfile, usando fórmulas físicas de papel KDP e offset nacional.</td>
+    </tr>
+    <tr>
+      <td>22</td>
+      <td><b>Preflight em tempo real</b></td>
+      <td><span class="pill hard">Bônus</span></td>
+      <td><span class="pill warn">Arquitetado</span></td>
+      <td>Tipo <code>PreflightIssue</code> projetado para retornar erros tipográficos, imagens em baixa resolução ou RGB.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2><span class="n">5</span>Tipologias de Livros e Formatos Padrão</h2>
+<p>O Prelo foi projetado para acomodar 7 categorias distintas de livros, cada uma com requisitos geométricos, margens e tratamentos de imagem específicos. O motor permite tanto o uso desses presets quanto a total personalização pelo usuário:</p>
+
+<table>
+  <thead>
+    <tr class="header-row">
+      <th>ID</th>
+      <th>Tipologia de Livro</th>
+      <th>Formatos Comuns (Trim Size)</th>
+      <th>Margens Padrão (Inside / Outside / Top / Bottom)</th>
+      <th>Sangria (Bleed)</th>
+      <th>Recursos Críticos do Motor Utilizados</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><b>1</b></td>
+      <td><b>Texto Puro</b><br><small>(Romance, Novela, Ficção)</small></td>
+      <td>
+        • 14x21 cm (Padrão BR)<br>
+        • A5 (14.8x21 cm)<br>
+        • 6"x9" (Trade US)
+      </td>
+      <td>
+        Inside: 20mm (0.78")<br>
+        Outside: 15mm (0.59")<br>
+        Top/Bottom: 15mm
+      </td>
+      <td><b>Sem Sangria</b><br>(0mm)</td>
+      <td>
+        • Encadeamento simples de texto (Fase 0)<br>
+        • Quebra KP com hifenização pt-BR conectada; justificação visual na Fase 1<br>
+        • Cabeçalhos dinâmicos e Nº de Página (Fase 4)
+      </td>
+    </tr>
+    <tr>
+      <td><b>2</b></td>
+      <td><b>Imagens Ocasionais</b><br><small>(Não-ficção, Biografia, Negócios)</small></td>
+      <td>
+        • 16x23 cm (Padrão BR)<br>
+        • 6"x9" (Trade US)<br>
+        • 7"x10" (Executive)
+      </td>
+      <td>
+        Inside: 22mm (0.86")<br>
+        Outside: 18mm (0.70")<br>
+        Top/Bottom: 18mm
+      </td>
+      <td><b>3.2mm</b><br>(0.125")</td>
+      <td>
+        • Imagens intercaladas com alinhamento absoluto (Fase 3)<br>
+        • Text-wrap retangular (Fase 5)<br>
+        • Caixas de destaque (Callout Boxes) com fundo (Fase 4)
+      </td>
+    </tr>
+    <tr>
+      <td><b>3</b></td>
+      <td><b>Imagens com Contorno</b><br><small>(Infantil, Juvenil, Revista)</small></td>
+      <td>
+        • 8.25"x8.25" (Quadrado KDP)<br>
+        • 8.5"x8.5" (Square Big)<br>
+        • A4 (21x29.7 cm)
+      </td>
+      <td>
+        Internas/Externas:<br><b>12mm</b> (0.47")<br>
+        <small>(Aproveitamento máximo)</small>
+      </td>
+      <td><b>3.2mm</b> (POD) ou<br><b>5mm</b> (Offset)</td>
+      <td>
+        • <b>Text-wrap por canal alfa (marching squares) (Fase 5)</b><br>
+        • Editor de polígonos de contorno manual (Fase 5)<br>
+        • Texto sobreposto sobre imagens sangradas (Fase 3)
+      </td>
+    </tr>
+    <tr>
+      <td><b>4</b></td>
+      <td><b>Livros de Imagens</b><br><small>(Fotografia, Arte, Portfólio)</small></td>
+      <td>
+        • 8.5"x11" (Letter Vertical)<br>
+        • 11"x8.5" (Letter Landscape)<br>
+        • 10"x10" (Quadrado Grande)
+      </td>
+      <td>
+        Finas (10mm) ou<br><b>Sem Margens</b><br>(Full Bleed)
+      </td>
+      <td><b>3.2mm</b> (POD) ou<br><b>5mm</b> (Offset)</td>
+      <td>
+        • Imagens de página inteira (Bleed completo)<br>
+        • <b>Validação de DPI (300 ppi mínimo no Preflight) (Fase 6)</b><br>
+        • Perfis de cor dual (sRGB em tela, CMYK nativo no PDF)
+      </td>
+    </tr>
+    <tr>
+      <td><b>5</b></td>
+      <td><b>Didáticos e Técnicos</b><br><small>(Manuais, Apostilas, Guias)</small></td>
+      <td>
+        • A4 (21x29.7 cm)<br>
+        • Letter (8.5"x11")<br>
+        • 16x23 cm
+      </td>
+      <td>
+        Inside: 25mm (0.98")<br>
+        Outside: 20mm (0.78")<br>
+        Top/Bottom: 20mm
+      </td>
+      <td><b>3.2mm</b><br>(0.125")</td>
+      <td>
+        • Estilos de lista complexos (bullets, numerações) (Fase 4)<br>
+        • Tabelas simples com colunas posicionadas (Fase 4)<br>
+        • Boxes coloridos de dicas/alertas e separadores
+      </td>
+    </tr>
+    <tr>
+      <td><b>6</b></td>
+      <td><b>Poesia e Peças</b><br><small>(Antologias, Teatro, Letras)</small></td>
+      <td>
+        • A5 (14.8x21 cm)<br>
+        • 5"x8" (Pocket US)<br>
+        • 12x18 cm (Formato Poesia)
+      </td>
+      <td>
+        Inside: 25mm (0.98")<br>
+        Outside: 25mm (0.98")<br>
+        <small>(Margens largas)</small>
+      </td>
+      <td><b>Sem Sangria</b><br>(0mm)</td>
+      <td>
+        • Alinhamento horizontal centralizado de blocos de verso (Fase 4)<br>
+        • Controle fino de quebras de linha e estrofes (Fase 1)<br>
+        • Formatação específica de nomes de personagens (Fase 4)
+      </td>
+    </tr>
+    <tr>
+      <td><b>7</b></td>
+      <td><b>Cadernos e Planners</b><br><small>(Agendas, Planners, Logbooks)</small></td>
+      <td>
+        • A5 (14.8x21 cm)<br>
+        • 7"x10" (Executive)<br>
+        • A4 (21x29.7 cm)
+      </td>
+      <td>
+        Inside: 18mm (0.70")<br>
+        Outside: 12mm (0.47")<br>
+        Top/Bottom: 12mm
+      </td>
+      <td><b>3.2mm</b><br>(0.125")</td>
+      <td>
+        • <b>Master Pages altamente repetitivas com elementos estáticos (Fase 4)</b><br>
+        • Grades de linhas/pontilhados gerados vetorialmente (Fase 3)<br>
+        • Duplicação de páginas em lote
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h2><span class="n">6</span>Perfis de Gráfica & Fórmulas de Lombada</h2>
+<p>O Prelo implementa presets reais com parâmetros de controle rigorosos para impressão industrial:</p>
+
+<div class="grid three">
+  <div class="card">
+    <h3 style="margin-top:0">KDP Paperback 6×9"</h3>
+    <p><b>Ideal para:</b> Amazon Self-Publishing</p>
+    <ul>
+      <li><b>Trim Size:</b> 6 × 9 polegadas</li>
+      <li><b>Sangria (Bleed):</b> 0.125 polegadas (3.2mm)</li>
+      <li><b>Color Mode:</b> CMYK (Conversão final sRGB aceita)</li>
+      <li><b>Limite de Tinta (TAC):</b> 300%</li>
+      <li><b>Perfil de Cor:</b> US Web Coated SWOP v2</li>
+      <li><b>Padrão PDF:</b> PDF/X-1a</li>
+      <li><b>Fórmula da Lombada:</b> Páginas × 0.002252" (papel branco comum)</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3 style="margin-top:0">IngramSpark 6×9"</h3>
+    <p><b>Ideal para:</b> Distribuição Global Premium</p>
+    <ul>
+      <li><b>Trim Size:</b> 6 × 9 polegadas</li>
+      <li><b>Sangria (Bleed):</b> 0.125 polegadas (3.2mm)</li>
+      <li><b>Color Mode:</b> CMYK Estrito</li>
+      <li><b>Limite de Tinta (TAC):</b> 240% (Rigoroso)</li>
+      <li><b>Perfil de Cor:</b> US Web Coated SWOP v2</li>
+      <li><b>Padrão PDF:</b> PDF/X-1a:2001 ou PDF/X-3</li>
+      <li><b>Fórmula da Lombada:</b> Páginas × 0.002252" (padrão)</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3 style="margin-top:0">Offset Brasil 14×21cm</h3>
+    <p><b>Ideal para:</b> Gráficas Nacionais (Pólen/Panda)</p>
+    <ul>
+      <li><b>Trim Size:</b> 14 × 21 cm (5.51" × 8.27")</li>
+      <li><b>Sangria (Bleed):</b> 5mm (0.197 polegadas)</li>
+      <li><b>Color Mode:</b> CMYK Nativo</li>
+      <li><b>Limite de Tinta (TAC):</b> 300%</li>
+      <li><b>Perfil de Cor:</b> ISO Coated v2 (FOGRA39)</li>
+      <li><b>Padrão PDF:</b> PDF/X-1a:2001</li>
+      <li><b>Fórmula da Lombada:</b> <code>(Páginas × Gramatura × 2) / 28800</code></li>
+    </ul>
+  </div>
+</div>
+
+<div class="card note">
+  <h4 style="margin-top:0; font-family: var(--serif); font-size: 16px;">Tabela KDP Gutter (Margem Interna Segura)</h4>
+  <p>O Prelo calcula a margem interna (gutter) com base no número de páginas do livro para evitar que o texto suma na dobra da lombada colada:</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Nº Máximo de Páginas</th>
+        <th>Margem Interna Adicional (Gutter)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>Até 150 páginas</td><td>0.375 polegadas (9.5 mm)</td></tr>
+      <tr><td>151 a 300 páginas</td><td>0.500 polegadas (12.7 mm)</td></tr>
+      <tr><td>301 a 500 páginas</td><td>0.625 polegadas (15.9 mm)</td></tr>
+      <tr><td>501 a 700 páginas</td><td>0.750 polegadas (19.1 mm)</td></tr>
+      <tr><td>701 a 828 páginas</td><td>0.875 polegadas (22.2 mm)</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2><span class="n">7</span>Decisões Críticas de Engenharia</h2>
+<div class="grid two">
+  <div class="card">
+    <h3 style="margin-top:0">1. Desacoplamento do DOM</h3>
+    <p>O navegador é inerentemente fluido. Usar elementos DOM ou <code>contenteditable</code> para cálculo de páginas físicas causa desalinhamentos severos e comportamentos inconsistentes em diferentes sistemas operacionais. A engine do Prelo calcula o layout de forma <b>puramente geométrica</b>, determinando coordenadas (X, Y) absolutas para cada caractere. O HTML Canvas é usado apenas como rasterizador rápido do preview no editor, e os mesmos dados calculados alimentam as primitivas de vetor no PDF final.</p>
+  </div>
+  <div class="card">
+    <h3 style="margin-top:0">2. Knuth-Plass por Segmento</h3>
+    <p>O algoritmo de Knuth-Plass (KP) avalia o parágrafo inteiro para equilibrar os pontos de quebra e, depois, permitir linhas justificadas. Contudo, em livros com frames vinculados, a largura do frame pode mudar de um frame para o outro. Para contornar essa restrição, o Prelo adota a quebra de Knuth-Plass <b>por segmento</b>: otimiza o texto dentro do limite do frame corrente; quando ocorre o transbordo para o frame seguinte, o restante do texto do parágrafo é re-otimizado dinamicamente de acordo com a nova largura do frame receptor. A justificação visual completa só fica correta quando o renderer passar a desenhar runs posicionados com stretch/shrink por espaço.</p>
+  </div>
+  <div class="card">
+    <h3 style="margin-top:0">3. Conversão CMYK na VPS</h3>
+    <p>O padrão web é restrito ao espaço de cor sRGB. A geração de arquivos CMYK para impressão no padrão PDF/X-1a exige a conversão das cores e das imagens utilizando perfis ICC e calibração de limite de tinta (TAC). Como os navegadores não possuem suporte a CMYK nativo, o Prelo gera o layout vetorial estruturado e imagens de alta resolução no cliente e executa o processamento final de cores em uma <b>VPS server-side rodando utilitários Ghostscript e perfis ICC calibrados</b>.</p>
+  </div>
+  <div class="card">
+    <h3 style="margin-top:0">4. Medição de Fonte Injetada</h3>
+    <p>Na Fase 0, implementamos o Shaper com uma interface que aceita a injeção de uma função de medição externa (<code>MeasureFn</code>). Isso permitiu usar temporariamente a função nativa <code>ctx.measureText()</code> do canvas para acelerar o desenvolvimento do Frame Filler, mantendo o motor totalmente preparado para receber o leitor de arquivos binários <code>opentype.js</code> na Fase 1 sem a necessidade de reescrever a engine.</p>
+  </div>
+</div>
+
+<h2><span class="n">8</span>Plano de Desenvolvimento & Cronograma</h2>
+<p>Cronograma de etapas para a consolidação e refinamento do motor tipográfico Prelo:</p>
+
+<div class="phase-list">
+  
+  <!-- Fase 0 -->
+  <div class="phase-item" style="border-left: 4px solid var(--ok);">
+    <div class="phase-header">
+      <h4>Fase 0R — Fundação TypeScript, Testes & Unidades Físicas</h4>
+      <div>
+        <span class="pill ok">Revalidada</span>
+        <span class="tag" style="margin-left: 8px;">base técnica</span>
+      </div>
+    </div>
+    <div class="phase-body">
+      <p style="margin-top:0">Estabilização do esqueleto estrutural, corrigindo build/lint, adicionando testes do motor e introduzindo conversões físicas explícitas.</p>
+      <ul>
+        <li>[x] Inicialização do projeto usando <b>Vite + React + TypeScript</b>.</li>
+        <li>[x] Ativação do modo de compilação estrita (Strict Mode + NoUncheckedIndexedAccess).</li>
+        <li>[x] Criação do modelo de dados universal e presets iniciais em <code>types.ts</code>.</li>
+        <li>[x] Implementação do Tokenizer associando estilo por palavra/caractere.</li>
+        <li>[x] Criação do <code>frame-filler.ts</code> suportando refluxo básico entre frames.</li>
+        <li>[x] Separação do Canvas Renderer e renderização do indicador físico de transbordo (⊕).</li>
+        <li>[x] Testes automatizados iniciais para fluxo entre frames, overflow, quebras greedy, contrato KP, preservação de espaços no refluxo, unidades físicas e preset KDP com bleed.</li>
+        <li>[x] Desenvolvimento da interface demo com visualizador de pipeline e estatísticas dinâmicas.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Fase 1 -->
+  <div class="phase-item" style="border-left: 4px solid var(--accent);">
+    <div class="phase-header">
+      <h4>Fase 1 — Motor Físico Determinístico & Layout de Story</h4>
+      <div>
+        <span class="pill ok" style="background-color: var(--accent-soft); color: var(--accent);">Em andamento</span>
+        <span class="tag" style="margin-left: 8px;">2-3 semanas</span>
+      </div>
+    </div>
+    <div class="phase-body">
+      <p style="margin-top:0">Transformar o protótipo de string + frames em engine de documento físico: unidades canônicas, Story real, linhas/runs posicionados e saída geométrica reutilizável por Canvas e PDF.</p>
+      <ul>
+        <li>[x] Criar a primeira API <code>flowStory(document, storyId)</code>, respeitando <code>frameChainIds</code> e validando erros de Story/frame/estilo ausentes.</li>
+        <li>[ ] Evoluir <code>flowStory()</code> para layout físico completo com páginas, colunas, padding e recomposição incremental.</li>
+        <li>[x] Criar geometria física inicial em pontos PostScript a partir de perfis de impressão.</li>
+        <li>[x] Normalizar documento físico em páginas com MediaBox/BleedBox/TrimBox e frames relativos ao trim.</li>
+        <li>[ ] Migrar frames, páginas e renderer para tratar ponto PostScript como unidade interna e Canvas como transformação de visualização.</li>
+        <li>[ ] Trocar <code>LayoutLine.text</code> simples por runs/segmentos posicionados com baseline, avanço e estilo.</li>
+        <li>[x] Conectar <code>tex-linebreak</code> e <code>hypher</code> ao caminho KP com contrato testado e sem fallback silencioso.</li>
+        <li>[ ] Implementar justificação visual real com runs posicionados e distribuição de espaços no renderer.</li>
+        <li>[ ] Avaliar limite do <code>opentype.js</code> e registrar critério de migração futura para HarfBuzz/rustybuzz.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Fase 2 -->
+  <div class="phase-item">
+    <div class="phase-header">
+      <h4>Fase 2 — Export PDF Físico & Preflight Mínimo</h4>
+      <div>
+        <span class="pill warn">Pendente</span>
+        <span class="tag" style="margin-left: 8px;">3-4 semanas</span>
+      </div>
+    </div>
+    <div class="phase-body">
+      <p style="margin-top:0">Provar que a geometria calculada pelo motor fecha arquivo de livro físico antes de investir em editor visual avançado.</p>
+      <ul>
+        <li>[ ] Gerar PDF com MediaBox, TrimBox e BleedBox corretos.</li>
+        <li>[ ] Embutir/subsetar fontes usadas pelo documento.</li>
+        <li>[ ] Exportar texto e imagens a partir do mesmo layout usado no Canvas.</li>
+        <li>[ ] Rodar conversão/validação PDF/X via Ghostscript, callas, pdfRest ou ferramenta equivalente.</li>
+        <li>[ ] Implementar preflight mínimo: overflow, bleed, margem segura, DPI de imagem e fonte ausente.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Fase 3 -->
+  <div class="phase-item">
+    <div class="phase-header">
+      <h4>Fase 3 — Text-wrap Estrutural & Performance</h4>
+      <div>
+        <span class="pill warn">Pendente</span>
+        <span class="tag" style="margin-left: 8px;">2-3 semanas</span>
+      </div>
+    </div>
+    <div class="phase-body">
+      <p style="margin-top:0">Provar cedo que imagens e obstáculos alteram o fluxo tipográfico sem destruir performance ou qualidade de quebra.</p>
+      <ul>
+        <li>[ ] Implementar wrap por bounding-box.</li>
+        <li>[ ] Implementar wrap por polígono manual usando bandas horizontais por linha.</li>
+        <li>[ ] Medir reflow em documentos de 30-50 páginas.</li>
+        <li>[ ] Adiar alpha-channel/marching squares até bounding-box e polígono estarem estáveis.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Fase 4 -->
+  <div class="phase-item">
+    <div class="phase-header">
+      <h4>Fase 4 — Estilos e Formatação Avançada</h4>
+      <div>
+        <span class="pill warn">Pendente</span>
+        <span class="tag" style="margin-left: 8px;">2 semanas</span>
+      </div>
+    </div>
+    <div class="phase-body">
+      <p style="margin-top:0">Refinamento estético e controle de estilos complexos de parágrafo.</p>
+      <ul>
+        <li>[ ] Registro de estilos nomeados em cascata (StyleRegistry).</li>
+        <li>[ ] Alinhamento vertical forçado a Baseline Grid do documento.</li>
+        <li>[ ] Detecção e controle de órfãs, viúvas e regras de quebra (keepWithNext).</li>
+        <li>[ ] Capitulares automáticos (drop caps) e suporte a capitais pequenas (small caps).</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Fase 5 -->
+  <div class="phase-item">
+    <div class="phase-header">
+      <h4>Fase 5 — Edição Interativa no Canvas</h4>
+      <div>
+        <span class="pill warn">Pendente</span>
+        <span class="tag" style="margin-left: 8px;">2-3 semanas</span>
+      </div>
+    </div>
+    <div class="phase-body">
+      <p style="margin-top:0">Adicionar manipulação visual depois que motor físico, PDF e text-wrap estiverem provados.</p>
+      <ul>
+        <li>[ ] Handles visuais nas caixas para redimensionamento e rotação interativa.</li>
+        <li>[ ] Operações de arrastar e snapping automático a guias de margem e baseline.</li>
+        <li>[ ] Hit-testing geométrico para mapear cliques a glifos/caracteres.</li>
+        <li>[ ] Caret, seleção e edição direta apenas após o layout de runs/glifos estar estável.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Fase 6 -->
+  <div class="phase-item">
+    <div class="phase-header">
+      <h4>Fase 6 — Fechamento Gráfico Avançado</h4>
+      <div>
+        <span class="pill warn">Pendente</span>
+        <span class="tag" style="margin-left: 8px;">3-4 semanas</span>
+      </div>
+    </div>
+    <div class="phase-body">
+      <p style="margin-top:0">Expandir o exportador já provado para casos de gráfica mais exigentes, múltiplos perfis e validações mais profundas.</p>
+      <ul>
+        <li>[ ] Perfis versionados por destino: KDP, IngramSpark e gráficas offset nacionais.</li>
+        <li>[ ] Controle de TAC, preto 100K/rich black e políticas de conversão RGB→CMYK por perfil ICC.</li>
+        <li>[ ] Marcas de corte, sangria, color bars e regras de arquivo limpo conforme exigência da gráfica.</li>
+        <li>[ ] Preflight avançado: overprint, transparência achatada, contagem par/múltiplos de caderno e lombada calculada por papel.</li>
+      </ul>
+    </div>
+  </div>
+
+</div>
+
+<h2><span class="n">9</span>Gerenciamento de Riscos e Testes Prévios (Spikes)</h2>
+<table>
+  <thead>
+    <tr class="header-row">
+      <th>Spike Técnico</th>
+      <th>Objetivo da Validação</th>
+      <th>Risco Mapeado</th>
+      <th>Estratégia de Contingência</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><b>Knuth-Plass + Multi-frame</b></td>
+      <td>Verificar se o algoritmo KP comporta larguras de coluna variáveis no mesmo parágrafo.</td>
+      <td>O KP clássico espera larguras uniformes; mudanças físicas de caixa podem quebrar o balanceamento.</td>
+      <td>Calcular o KP individualmente por fragmento de caixa e refazer o cálculo ao trocar de frame.</td>
+    </tr>
+    <tr>
+      <td><b>Métricas opentype.js</b></td>
+      <td>Garantir que as larguras medidas pelo <code>opentype.js</code> e as calculadas pelo browser sejam compatíveis.</td>
+      <td>Se houver divergência nas larguras de caractere, o cursor desenhado no editor sairá de sincronia com as letras.</td>
+      <td>Utilizar as larguras exatas da fonte obtidas no opentype.js para posicionar cada letra individualmente no canvas.</td>
+    </tr>
+    <tr>
+      <td><b>Text-wrap por Alfa em Tempo Real</b></td>
+      <td>Validar o tempo de processamento para extrair contornos alfa de imagens grandes durante redimensionamento.</td>
+      <td>Cálculo lento (marching squares) causará travamentos de frames (lag) ao arrastar imagens pela página.</td>
+      <td>Fazer debounce do cálculo de contorno e gerar uma máscara simplificada de baixa fidelidade durante o arrasto.</td>
+    </tr>
+  </tbody>
+</table>
+
+<footer>
+  <span>Prelo Engine v0.1.0 — Projeto Ativo em Desenvolvimento</span>
+  <span>Local: /Users/alexmeiradossantos/Desktop/pasta sem título</span>
+</footer>
+</div>
+</body>
+</html>

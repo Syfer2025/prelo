@@ -1,0 +1,656 @@
+# Estudo de viabilidade — Editor de diagramação no navegador
+
+> Achados brutos da investigação (workflow `wf_b1a2ce97-14f`), salvos em jun/2026.
+> Pesquisas concluídas: 8 de 8 frentes. Verificações adversariais: 4. Síntese final: pendente.
+> JSON completo: `viabilidade-resultados-brutos.json`
+
+---
+## Capacidades e LIMITES do navegador para imagens em diagramação de qualidade de impressão (contorno de texto, efeitos sobreviventes em PDF, cor RGB vs CMYK/ICC, DPI, formatos de imagem)
+
+**Resumo:** O navegador é tecnicamente capaz de diagramação visual sofisticada na tela (shape-outside lendo canal alfa de PNG, blend modes, filtros, clip-path, máscaras), mas tem um teto duro e intransponível para QUALIDADE DE IMPRESSÃO em três frentes: (1) COR — o pipeline gráfico do navegador (Canvas, CSS, compositing) é exclusivamente sRGB/RGB; não há suporte real a CMYK nem gestão de cor ICC. device-cmyk() e @color-profile (CSS Color 5) NÃO são implementados em NENHUM navegador (confirmado pela MDN em 2026) e são marcados como "at-risk" na própria spec. Imagens CMYK carregadas no navegador são convertidas para RGB de forma lossy e não-reversível. Isto é um BLOCKER para impressão profissional (PDF/X, gráfica). (2) EFEITOS na exportação para PDF — o "print to PDF"/headless Chrome rasteriza (achata para bitmap) opacity, mix-blend-mode, filter, drop-shadow e máscaras; texto puro permanece vetorial, mas qualquer efeito vira raster na resolução de impressão escolhida, com perda. (3) RESOLUÇÃO/DPI — CSS é fixado em 1in=96px; imagens precisam ter pixels físicos suficientes (largura_polegadas × 300) para sair a 300dpi, senão saem borradas. A solução robusta NÃO é o navegador: são motores de impressão dedicados (Prince, Antenna House, PDFreactor, WeasyPrint) que suportam device-cmyk(), ICC, spot colors e TIFF/CMYK, ou conversão server-side RGB→CMYK via Ghostscript com perfil ICC. shape-outside com url(png)+alfa é amplamente suportado em navegadores desde 2020 e é o achado de menor risco.
+
+### Achados
+- **device-cmyk() e @color-profile NÃO são suportados por nenhum navegador (2026) e são features 'at-risk' na spec CSS Color 5** _(🛑 BLOCKER · conf. high)_
+  - MDN afirma textualmente para device-cmyk(): 'Currently, no browsers support this feature.' Idem para @color-profile. A CSS Color Module Level 5 (w3.org/TR/css-color-5) lista 'Custom Color Spaces, @color-profile e device-cmyk()' como at-risk, podendo ser removidas no período CR. A própria MDN avisa que mesmo onde processada, 'the end result is likely to be different from the printed result without knowing the precise output colorimetry'. Consequência: definir cor CMYK exata para gráfica via navegador é impossível hoje.
+- **O pipeline do navegador (Canvas/CSS/compositing) é inteiramente sRGB/RGB; não há gestão de cor CMYK** _(🛑 BLOCKER · conf. high)_
+  - Fonte técnica direta (dev.to, PDF editor no browser): 'browsers only understand sRGB. They have no concept of CMYK color at all.' Canvas 2D opera em RGBA 8-bit sem ICC de saída. EyeDropper API só devolve RGB. Não há como o navegador emitir tinta CMYK controlada.
+- **Imagens CMYK carregadas no navegador são convertidas para RGB de forma lossy e NÃO-reversível** _(🛑 BLOCKER · conf. high)_
+  - pdf.js/navegador converte CMYK→RGB para exibir ('that conversion is lossy'). Pior: 'RGB to CMYK conversion is not the inverse of CMYK to RGB. The color spaces don't map one-to-one.' Logo um round-trip CMYK→RGB(tela)→CMYK(export) perde a cor original. Workaround citado: 'dual representation' (manter o CMYK original + preview sRGB) — exige pipeline próprio, não é nativo do browser.
+- **TIFF e JPEG-CMYK não são formatos de imagem nativos do navegador; só RGB (PNG/JPEG/WebP/AVIF/SVG)** _(🔴 alto · conf. high)_
+  - Navegadores não decodificam TIFF nem renderizam JPEG com canais CMYK corretamente (caem em fallback ou cor errada). Para print profissional, o ativo de imagem em CMYK precisa ser injetado fora do navegador. Contorno: converter no servidor, ou usar motor de impressão. Prince, por contraste, suporta 'JPEG, PNG, TIFF, GIF, WebP e AVIF' e 'preserves the ICC profiles embedded in bitmap images'.
+- **Na exportação para PDF do navegador, efeitos (opacity, mix-blend-mode, filter, drop-shadow, máscaras) são RASTERIZADOS/achatados; texto puro fica vetorial** _(🔴 alto · conf. medium)_
+  - O modelo de compositing trata filter/opacity/blend/clip como 'visual effect... applied to a bitmap' (RenderingNG). No PDF resultante esses elementos são achatados (flatten transparency): 'Flattened regions that become bitmaps take on the resolution you pick' e 'flattening blend modes is a computation; rounding can produce subtle colour differences'. Há relatos consistentes de box-shadow/drop-shadow renderizando como caixa cinza ou some quando combinado com clip-path/máscara no PDF. Risco: perda de nitidez e desvio de cor exatamente nas áreas com efeito.
+- **Resolução de impressão: CSS fixa 1in=96px; imagem só sai a 300dpi se tiver pixels físicos suficientes** _(🟠 médio · conf. high)_
+  - Relação fixa 1in=96px (1dppx=96dpi). Para 300dpi numa imagem de N polegadas é preciso N×300 px reais; uma imagem dimensionada por CSS sem pixels suficientes sai interpolada/borrada. @media print and (min-resolution: 300dpi) só seleciona regras, não cria pixels. Mitigação: usar imagens super-amostradas (3,125× a dimensão CSS) e print-color-adjust: exact para forçar impressão de fundos/imagens.
+- **print-color-adjust: exact (-webkit- em Blink/WebKit) é necessário para imprimir fundos e imagens, mas o user agent pode ignorar** _(🟠 médio · conf. high)_
+  - Default 'economy' permite ao navegador omitir background-images e ajustar cores. 'exact' força imprimir, mas MDN avisa: 'there isn't any guarantee that print-color-adjust will do anything' — opções do usuário/UA têm prioridade. Risco de fundos/imagens decorativas sumirem na impressão se não tratado.
+- **shape-outside com url(png) lê o canal alfa via shape-image-threshold; amplamente suportado desde 2020 (inclui Firefox 62)** _(🟡 baixo · conf. high)_
+  - A área de float é extraída dos pixels com alfa > shape-image-threshold (ex.: 0.5 = >50% opaco); shape-margin adiciona folga. Baseline 'widely available' desde jan/2020; Firefox enviou em 62. Limites: só aplica a elementos float; imagem url() exige CORS (mesma origem evita o problema); não anima quando é imagem. É o recurso de diagramação de MENOR risco aqui.
+- **A rota robusta para print de qualidade NÃO é o navegador: motores de impressão CSS dedicados suportam CMYK/ICC/spot/TIFF** _(🟡 baixo · conf. high)_
+  - print-css.rocks/comunidade: 'device-cmyk and ICC color profiles are not implemented in browsers, but only in CSS print engines' (BFO, Prince, PDFreactor, Antenna House, Vivliostyle, WeasyPrint). Prince: device-cmyk()/cmyk(), spot colors via @prince-color/prince-color() com overprint, -prince-image-resolution: 300dpi, preserva ICC embarcado. WeasyPrint: device-cmyk(), @color-profile, pdf_variant='pdf/x-4' (CMYK desde v67).
+- **Mesmo motores dedicados têm armadilhas de cor: WeasyPrint emite /Group /CS /DeviceRGB em toda página/XObject, violando PDF/X-4 CMYK** _(🟠 médio · conf. high)_
+  - Issue Kozea/WeasyPrint #2723: mesmo com todas as cores em device-cmyk() e pdf/x-4, o transparency group fica DeviceRGB; ISO 15930-7 exige consistência com o output intent CMYK, então validadores de pré-impressão rejeitam ('images in RGB'). Fechada como duplicata de #2631 (problema conhecido, não resolvido). Indica que validar PDF/X com a gráfica é obrigatório, não opcional.
+- **Conversão server-side RGB→CMYK via Ghostscript com ICC é o contorno prático para um pipeline iniciado no navegador** _(🔴 alto · conf. high)_
+  - Ex.: filipnet/ghostscript-pdf-rgb2cmyk (licença BSD-3, requer Ghostscript 9.52) usa o perfil ISOcoated_v2_300_eci.icc. Ghostscript faz workflow ICC (-sOutputICCProfile, perfis device-link) ou -dUseFastColor (não-ICC). Caveat conhecido: geração de preto incorreta sem device-link adequado (bug GS #698723: 'wrong black'). Logo a conversão automática RGB→CMYK degrada pretos/cores saturadas sem ajuste fino.
+
+### Bibliotecas / ferramentas
+- **CSS shape-outside / shape-image-threshold / shape-margin** — Contorno de texto ao redor de imagem lendo canal alfa de PNG; diagramação tipo revista no navegador _(maturidade: production; Web standard (CSS Shapes Level 1, CR))_ — https://developer.mozilla.org/en-US/docs/Web/CSS/shape-outside
+- **CSS print-color-adjust (-webkit-print-color-adjust)** — Forçar impressão de cores de fundo e imagens (valor exact), evitando que o UA descarte fundos _(maturidade: production; Web standard)_ — https://developer.mozilla.org/en-US/docs/Web/CSS/print-color-adjust
+- **CSS device-cmyk() / @color-profile (CSS Color Module Level 5)** — Cor CMYK e perfis ICC em CSS — necessário para print exato _(maturidade: experimental; Web standard (at-risk, CR))_ — https://developer.mozilla.org/en-US/docs/Web/CSS/color_value/device-cmyk
+- **Prince (PrinceXML)** — Motor HTML/CSS→PDF print-ready: device-cmyk(), spot colors (@prince-color/overprint), TIFF, preserva ICC, -prince-image-resolution 300dpi _(maturidade: production; Comercial (gratuito não-comercial com marca d'agua))_ — https://www.princexml.com/doc/graphics/
+- **WeasyPrint** — Motor HTML/CSS→PDF open-source com device-cmyk(), @color-profile, PDF/X-4; sem JS _(maturidade: production; BSD-3-Clause)_ — https://github.com/Kozea/WeasyPrint
+- **Antenna House / PDFreactor / Vivliostyle / BFO** — Motores CSS Paged Media alternativos com suporte a CMYK/ICC fora do navegador _(maturidade: production; Comercial (Vivliostyle open-source))_ — https://print-css.rocks/
+- **Ghostscript (filipnet/ghostscript-pdf-rgb2cmyk)** — Conversão server-side de PDF RGB→CMYK com perfil ICC (ISOcoated_v2_300_eci.icc); pós-processamento de PDFs gerados pelo navegador _(maturidade: production; BSD-3-Clause (script) / AGPL ou comercial (Ghostscript))_ — https://github.com/filipnet/ghostscript-pdf-rgb2cmyk
+- **Puppeteer / Headless Chrome Page.printToPDF** — Gerar PDF a partir de HTML no servidor — mas herda TODAS as limitações de cor (sRGB) e rasterização de efeitos do navegador _(maturidade: production; Apache-2.0)_ — https://blog.risingstack.com/pdf-from-html-node-js-puppeteer/
+- **cmyk-preview-toolkit** — Lib npm para preview RGB de cores CMYK + snapping de paleta via Delta-E CIE76 (abordagem dual-representation) _(maturidade: experimental; unknown)_ — https://dev.to/vjmanoj/the-cmyk-problem-nobody-warns-you-about-when-building-a-pdf-editor-in-the-browser-3a02
+
+### Perguntas em aberto
+- Qual o destino final do PDF: gráfica offset/digital exigindo PDF/X-1a ou PDF/X-4 com output intent CMYK, ou impressão de escritório/inkjet onde RGB é aceitável? Isto decide se o navegador é viável ou se é obrigatório um motor dedicado.
+- O contorno de texto (shape-outside) precisa sobreviver no PDF final, ou basta na tela? Não há fonte confirmando explicitamente o comportamento de shape-outside no PDF gerado pelo Chrome — exige teste empírico no engine-alvo.
+- As imagens de origem já estarão em CMYK/TIFF com perfil ICC, ou serão fornecidas em RGB? Se RGB, perde-se controle sobre separação de tintas e geração de preto.
+- Há tolerância para um pipeline em duas etapas (HTML→PDF RGB no navegador, depois Ghostscript RGB→CMYK com ICC no servidor), ou o requisito é gerar CMYK diretamente?
+- Os efeitos (blend modes, filtros, sombras) são essenciais ou decorativos? Como são rasterizados/achatados no PDF, podem causar rejeição em pré-impressão e desvio de cor — avaliar se podem ser pré-rasterizados em alta resolução ou evitados.
+- Qual a magnitude da degradação de preto/saturação aceitável na conversão RGB→CMYK automática (bug conhecido de 'wrong black' no Ghostscript sem device-link)?
+
+<details><summary>Fontes (18)</summary>
+
+- https://developer.mozilla.org/en-US/docs/Web/CSS/shape-outside
+- https://developer.mozilla.org/en-US/docs/Web/CSS/color_value/device-cmyk
+- https://developer.mozilla.org/en-US/docs/Web/CSS/@color-profile
+- https://developer.mozilla.org/en-US/docs/Web/CSS/print-color-adjust
+- https://www.w3.org/TR/css-color-5/
+- https://dev.to/vjmanoj/the-cmyk-problem-nobody-warns-you-about-when-building-a-pdf-editor-in-the-browser-3a02
+- https://www.princexml.com/doc/graphics/
+- https://print-css.rocks/
+- https://github.com/Kozea/WeasyPrint/issues/2723
+- https://github.com/filipnet/ghostscript-pdf-rgb2cmyk
+- https://bugs.ghostscript.com/show_bug.cgi?id=698723
+- https://ghostscript.readthedocs.io/en/latest/GhostscriptColorManagement.html
+- https://developer.chrome.com/docs/chromium/renderingng-architecture
+- https://mapsoft.com/posts/flatten-pdf-transparencies.html
+- https://bugzilla.mozilla.org/show_bug.cgi?id=1098939
+- https://developer.mozilla.org/en-US/docs/Web/CSS/resolution
+- https://caniuse.com/css-color-adjust
+- https://blog.risingstack.com/pdf-from-html-node-js-puppeteer/
+
+</details>
+
+---
+## Viabilidade de fluxo de texto encadeado (threaded text estilo InDesign) entre frames/páginas no navegador
+
+**Resumo:** O fluxo de texto encadeado entre caixas de altura fixa é factível no navegador, mas NÃO existe primitiva CSS nativa que faça isso: a única tentativa (CSS Regions) foi removida do Blink em 2014 por performance ruim e falta de consenso, e nunca voltou. A abordagem viável de produção é em JavaScript: medir overflow com Range/getClientRects e quebrar conteúdo página a página, exatamente como Paged.js (MIT, em produção) e Vivliostyle.js (AGPLv3, motor maduro e ativamente mantido — release v2.43.3 em jun/2026) fazem para layout estático/render. Os dois são engines de PAGINAÇÃO (render one-shot), não editores: re-paginam o documento inteiro, o que é aceitável para export mas caro para edição ao vivo. O problema realmente difícil não é paginar — é a EDIÇÃO interativa: reflow incremental ao digitar no meio de um documento longo, cursor/seleção atravessando frames separados, e performance em 300+ páginas. A indústria convergiu para abordagens CSS-float + virtualização de DOM (Badon Writer, Tiptap Pages 2025) justamente para evitar splitting algorítmico de nós, que é onde mora a dor. Veredito: um subconjunto (fluxo linear página-após-página com edição) é viável para 1 dev + IA em meses; o pacote completo do InDesign (frames de forma arbitrária, encadeamento não-linear, shape-outside alterando alturas de linha, cursor perfeito cross-frame, 300+ pág fluidas) é trabalho de anos / time.
+
+### Achados
+- **CSS Regions — a única primitiva nativa que fazia exatamente 'texto transbordando de uma caixa para a próxima' — está morta e não vai voltar** _(🔴 alto · conf. high)_
+  - Proposta pela Adobe em 2011, rejeitada pelo Google/Blink em 2014. Motivos documentados: performance ruim no Blink ('they currently perform badly'), implementação 'messy' no WebKit/Blink, e objeções de Mozilla/Opera ao uso de markup-dummy para definir a região de destino (named flow -> region chain). Safari 7/iOS7 chegou a implementar com -webkit-, IE11 com -ms-, mas nunca virou padrão interoperável. Conclusão: NÃO se pode depender de CSS Regions; qualquer solução precisa ser construída em JS sobre primitivas existentes.
+- **A técnica de produção é JS: detectar overflow por geometria (Range.getClientRects/getBoundingClientRect) e quebrar conteúdo nó-a-nó, não por busca binária** _(🟡 baixo · conf. high)_
+  - Range.getClientRects() retorna DOMRects de qualquer trecho de texto cruzando múltiplas linhas/elementos (MDN). O fluxo do Paged.js é Chunker.flow() -> render() (loop de páginas) -> layout() (trata overflow criando páginas) -> Layout.renderTo() (itera nós) -> Layout.findBreakToken(). Ou seja, é WALK sequencial de nós comparando contra a altura fixa da caixa, NÃO busca binária. Busca binária é usada em casos de medição de largura de uma única linha (ex.: lib Pretext / truncamento), não para encontrar o ponto de quebra de página em fluxo contínuo. Paged.js é MIT, ~735 commits, mantido.
+- **Vivliostyle.js é o motor de referência (prior art mais forte) e está vivo e bem mantido — mas é engine de RENDER, não editor** _(🟠 médio · conf. high)_
+  - É um motor de typesetting CSS Paged Media em JS, construído sobre a implementação EPUB Adaptive Layout de Peter Sorotokin; parseia propriedades de página que o browser ignora (footnotes, page numbering, floats, headers). Mantido pela Vivliostyle Foundation desde 2018, COM releases muito ativos: v2.43.3 em 18/jun/2026, v2.43.0 em 22/mai/2026 (cadência de vários releases/mês). Licença: Vivliostyle Core = AGPLv3 (copyleft forte — atenção comercial; Viewer pode ser chamado como programa independente; Vivliostyle Pub é Apache-2.0). Limitação crítica admitida pela comunidade: para edição ao vivo / in-browser designer 'the current pagination approach may need to be changed' — ele re-paginação o documento, não faz reflow incremental.
+- **O problema VERDADEIRAMENTE difícil é a edição interativa, não a paginação estática** _(🔴 alto · conf. high)_
+  - Fóruns do ProseMirror identificam o caso mais duro como 'splitting paragraphs that exceed page boundaries' e mover overflow para a página seguinte dentro da árvore do documento — operação cara e cheia de edge cases. Um dev relatou ter perdido a esperança de construir pagination ('I loss hope to build it, there is some static reasons'). Editar no MEIO de um doc longo idealmente exige reflow incremental (só re-paginar da edição em diante), o que nenhum dos engines one-shot (Paged.js/Vivliostyle) faz nativamente. Este é o item que faz o escopo explodir.
+- **Estado da arte para editores paginados foge do splitting algorítmico: usa CSS floats + edge cases manuais + virtualização de DOM** _(🟠 médio · conf. high)_
+  - Badon Writer (editor ProseMirror) atinge 450 páginas demonstradas: 'pagination largely relies on CSS... no node splitting and barely any calculation related to height/width, which is why it's quite performant'; usa floats para inserir fins de página e trata 'edge cases individually' (precisou reescrever plugin de tabela do zero). Limite admitido: 'how many DOM elements the browser/device can handle' — daí a necessidade de virtualização. Tiptap lançou 'Tiptap Pages' (alpha, set/2025) e plugins de comunidade (tiptap-pagination-breaks, hugs7/tiptap-extension-pagination) com pageHeight padrão 1056px / pageWidth 816px (A-letter @96dpi) usando decorations. Confirma: o caminho prático é CSS-first + heurísticas, não um algoritmo geral de quebra.
+- **Cursor e seleção atravessando frames separados é um problema conhecido e espinhoso do contenteditable** _(🔴 alto · conf. high)_
+  - Selection/Range API retorna limites incorretos ao selecionar através de múltiplos elementos; caret fica impreciso sob CSS transform/zoom/scale (justamente o que um canvas DTP usa); restaurar seleção após manipular o DOM programaticamente (o que a re-paginação faz a cada digitação) é não-confiável cross-browser (Bugzilla 1155031, 512295). Mitigação parcial: a CSS Custom Highlight API permite estilizar seleção via Range objects SEM alterar o DOM e suporta ranges não-contíguos cruzando elementos (W3C css-highlight-api-1) — útil para realce/seleção visual atravessando frames, mas NÃO resolve o caret de edição nativo entre containers separados.
+- **shape-outside / text-wrap alterando alturas de linha acopla-se mal com paginação e degrada performance** _(🟠 médio · conf. medium)_
+  - shape-outside só funciona em elementos float com width/height definidos e altera a largura disponível linha-a-linha — mudando quantas linhas cabem e portanto onde a página quebra; qualquer edição que mexa na forma força recálculo do fluxo a jusante. text-wrap: pretty 'hints the browser to favor text layout over speed' (custo de performance explícito). CSS multicol em mídia contínua transborda na direção inline (scroll horizontal) por padrão a menos que se use as novas column-height/column-wrap. Soma: o acoplamento layout-de-forma + quebra-de-página é fonte de reflow caro e edge cases.
+- **Existe um caminho alternativo: motor de layout próprio fora do DOM (modelo react-pdf)** _(🟠 médio · conf. high)_
+  - O @react-pdf/renderer NÃO usa o DOM do browser: usa Yoga (engine flexbox em WASM/JS) para calcular tamanho/coordenadas e faz page-breaking por heurísticas próprias, com line-breaking próprio (glyphs -> linhas em whitespace/regras de idioma) e render via pdfkit. A doc afirma que 'the layout stage is the most time-consuming step'. Vantagem: controle total e determinismo (bom para export/print). Desvantagem: você reimplementa tipografia e perde edição contenteditable nativa — trade-off enorme para um editor WYSIWYG, razoável para um exportador.
+- **Performance em 300+ páginas é gerenciável SE houver virtualização e reflow incremental — sem isso, é o gargalo** _(🔴 alto · conf. medium)_
+  - Badon Writer chega a 450 páginas e aponta o limite como contagem de elementos DOM. Editores precisam virtualizar (renderizar só páginas visíveis) e re-paginar apenas a partir do ponto editado. Nenhum engine pronto entrega virtualização + reflow incremental + cursor cross-frame juntos; é exatamente a combinação que falta no ecossistema e que precisa ser construída.
+
+### Bibliotecas / ferramentas
+- **Vivliostyle.js (@vivliostyle/core)** — Motor de typesetting CSS Paged Media em JS; prior art mais completo para paginação fiel (footnotes, headers, floats, page numbering). Bom para render/export, não para edição ao vivo. _(maturidade: production; AGPLv3 (Core) — copyleft forte, cautela comercial; Vivliostyle Pub é Apache-2.0)_ — https://github.com/vivliostyle/vivliostyle.js
+- **Paged.js** — Polyfill de CSS Paged Media: pagina HTML em páginas de tamanho fixo via Chunker/Layout/findBreakToken (walk de nós + detecção de overflow geométrica). Referência para o algoritmo de quebra. _(maturidade: production; MIT)_ — https://github.com/pagedjs/pagedjs
+- **@react-pdf/renderer + @react-pdf/yoga** — Layout fora do DOM: Yoga (flexbox) + line-breaking próprio + page-breaking por heurísticas, render via pdfkit. Modelo para um exportador determinístico independente do browser. _(maturidade: production; MIT)_ — https://react-pdf.org/rendering-process
+- **Tiptap Pages / PageKit** — Solução oficial (alpha, set/2025) de paginação para editor Tiptap/ProseMirror: page sizes A4/Letter, headers/footers, TableKit pagination-safe. Estado da arte comercial para editor paginado. _(maturidade: experimental; Tiptap Pro (comercial/proprietário))_ — https://tiptap.dev/blog/release-notes/structured-paginated-real-meet-tiptap-pages
+- **tiptap-extension-pagination (hugs7) / tiptap-pagination-breaks** — Plugins open-source de paginação para Tiptap via decorations; pageHeight 1056 / pageWidth 816 (Letter @96dpi). Ponto de partida para estudar abordagem decoration-based. _(maturidade: experimental; MIT)_ — https://github.com/hugs7/tiptap-extension-pagination
+- **ProseMirror** — Framework de editor estruturado (modelo de documento em árvore + transações) — base para construir um editor paginado com controle sobre splitting de nós e seleção. _(maturidade: production; MIT)_ — https://prosemirror.net/
+- **Range API (getClientRects / getBoundingClientRect)** — Primitiva nativa de medição de geometria de texto para detectar overflow e localizar pontos de quebra entre caixas de altura fixa. _(maturidade: production; Web standard (MDN))_ — https://developer.mozilla.org/en-US/docs/Web/API/Range/getClientRects
+- **CSS Custom Highlight API** — Estiliza seleção/realce via Range objects sem mexer no DOM; suporta ranges não-contíguos cruzando elementos — útil para seleção visual atravessando frames (não resolve caret de edição). _(maturidade: experimental; Web standard (W3C css-highlight-api-1))_ — https://www.w3.org/TR/css-highlight-api-1/
+- **CSS Regions** — Tentativa nativa de fluxo entre containers (named flow -> region chain). REMOVIDA do Blink (2014). Não usar — listada como contra-exemplo histórico. _(maturidade: abandoned; Web standard (descontinuado))_ — https://www.w3.org/TR/css-regions-1/
+
+### Perguntas em aberto
+- O escopo do projeto exige frames de forma/posição arbitrária (estilo InDesign verdadeiro) ou apenas fluxo linear página-após-página? Isso é o divisor entre 'meses' e 'anos'.
+- O encadeamento precisa ser NÃO-linear (texto da caixa A -> caixa C -> caixa B em ordem definida pelo usuário) ou sempre a próxima caixa na ordem de páginas?
+- A edição precisa ser WYSIWYG ao vivo no canvas, ou edição em um painel separado com re-paginação sob demanda seria aceitável? (Re-paginação sob demanda viabiliza usar Vivliostyle/Paged.js quase prontos.)
+- A licença AGPLv3 do Vivliostyle Core é compatível com o modelo de negócio (produto fechado/SaaS)? Se não, sobra Paged.js (MIT) ou motor próprio.
+- shape-outside / text-wrap em torno de imagens é requisito de v1 ou pode ser adiado? É um multiplicador de complexidade no reflow.
+- Qual o teto real de páginas esperado (50? 300? 1000?) e o número de usuários simultâneos — define se virtualização é opcional ou obrigatória.
+- É aceitável reimplementar tipografia em um motor próprio (modelo react-pdf) para ganhar determinismo de export, abrindo mão de contenteditable nativo?
+
+<details><summary>Fontes (21)</summary>
+
+- https://www.balisage.net/Proceedings/vol15/html/Wilm01/BalisageVol15-Wilm01.html
+- https://github.com/vivliostyle/vivliostyle.js/
+- https://github.com/vivliostyle/vivliostyle.js/releases
+- https://vivliostyle.org/faq/
+- https://github.com/pagedjs/pagedjs/
+- https://react-pdf.org/rendering-process
+- https://www.w3.org/TR/css-regions-1/
+- https://web.dev/articles/css-regions-exclusions
+- https://slashdot.org/story/14/01/29/1745233/google-planning-to-remove-css-regions-from-blink
+- https://developer.mozilla.org/en-US/docs/Web/API/Range/getClientRects
+- https://www.w3.org/TR/css-highlight-api-1/
+- https://developer.mozilla.org/en-US/docs/Web/CSS/Guides/Custom_highlight_API
+- https://discuss.prosemirror.net/t/pagination/6078
+- https://discuss.prosemirror.net/t/a-new-text-editor-with-pagination/6667
+- https://tiptap.dev/blog/release-notes/structured-paginated-real-meet-tiptap-pages
+- https://github.com/hugs7/tiptap-extension-pagination
+- https://github.com/adityayaduvanshi/tiptap-pagination-breaks
+- https://romik-mk.medium.com/tiptap-pagination-complete-solution-6b6fdb07e595
+- https://bugzilla.mozilla.org/show_bug.cgi?id=1155031
+- https://css-tricks.com/almanac/properties/s/shape-outside/
+- https://developer.mozilla.org/en-US/docs/Web/CSS/Guides/Multicol_layout/Handling_overflow
+
+</details>
+
+---
+## Viabilidade técnica: gerar PDF print-perfect (PDF/X-1a, CMYK, ICC) a partir de render do navegador
+
+**Resumo:** Confirmado: Chromium/Puppeteer/Playwright "print to PDF" gera PDF SOMENTE em RGB (DeviceRGB / sRGB). Não há suporte nativo a CMYK, PDF/X, perfis ICC de saída, cores spot ou overprint — imagens CMYK importadas são até convertidas para RGB (issue puppeteer #6480). Portanto, partir do navegador exige OBRIGATORIAMENTE um pós-processamento. O caminho viável e comprovado em produção é Chrome/Puppeteer (gera PDF RGB com vetor+texto) -> Ghostscript convertendo para CMYK + PDF/X-1a com perfil ICC (ferramenta de referência: vibranthq/press-ready). Isso preserva texto e vetor (não rasteriza, exceto onde há transparência, que o PDF/X-1a proíbe e força flattening). Esse arquivo é aceitável para KDP (que aliás aceita RGB direto) e potencialmente para IngramSpark/gráfica offset, MAS com riscos reais de cor: a conversão RGB->CMYK via Ghostscript tem o problema clássico do preto (texto RGB 0,0,0 vira "rich black" 4-cores em vez de K puro), gamut shift em azuis/vermelhos saturados, e fidelidade inferior ao InDesign/callas. Veredito: tecnicamente VIÁVEL para texto/vetor com Ghostscript, mas é um blocker PARCIAL para fidelidade de cor offset crítica — o caminho menos arriscado para máximo controle de CMYK/spot/overprint é um motor de layout server-side com CMYK nativo (Typst, ou PDFKit-cmyk), não reusar o render do navegador.
+
+### Achados
+- **Chromium/Puppeteer/Playwright print-to-PDF produz exclusivamente RGB; sem CMYK, PDF/X, ICC de saída, spot ou overprint nativos.** _(🔴 alto · conf. high)_
+  - Page.printToPDF (CDP) emite objetos em DeviceRGB/sRGB. Issue puppeteer #6480 (AdamGaskins, out/2020, ainda 'unconfirmed') documenta que imagens CMYK inseridas são convertidas para RGB no PDF, causando cor errada na impressão. Não existe API para definir OutputIntent, perfil ICC de saída, separações DeviceN/spot, nem overprint. Confirmado também pelo discurso da comunidade ('there is currently no way to get colors adhering to print color profiles in CMYK out of browsers').
+- **É obrigatório pós-processamento; Ghostscript RGB->CMYK + PDF/X-1a é o caminho comprovado e a ferramenta de referência é press-ready.** _(🟠 médio · conf. high)_
+  - vibranthq/press-ready encapsula Ghostscript com flags reais (de src/ghostScript.ts): -dPDFX -dBATCH -dNOPAUSE -dNOOUTERSAVE -sDEVICE=pdfwrite -dPDFSETTINGS=/prepress -dPrinted -r600 -sProcessColorModel=DeviceCMYK -sColorConversionStrategy=CMYK -sColorConversionStrategyForImages=CMYK -dOverrideICC -sOutputICCProfile=<perfil>.icc , mais um template PDFX_def.ps (Mustache) que injeta título e caminho do ICC para criar o OutputIntent. Perfil padrão: JapanColor2001Coated.icc (suporte limitado a 1 perfil). Para PDF/X-1a:2001 é preciso editar GTS_PDFXVersion/GTS_PDFXConformance no PDFX_def.ps.
+- **Ghostscript preserva texto e vetor (não rasteriza) na conversão de cor — exceto onde há transparência, que o PDF/X-1a proíbe.** _(🟠 médio · conf. high)_
+  - pdfwrite mantém glyphs e paths como vetor e refaz o embedding/subsetting de fontes. PDF/X-1a:2001 NÃO permite transparência (live transparency); qualquer área transparente precisa de flattening, que divide a arte em regiões vetoriais + rasterizadas, e texto sobre transparência pode virar pixels (não outline). press-ready oferece -dNoOutputFonts (--enforce-outline) para converter fontes em contornos quando o embedding é problemático. PDF/X-1a permite DeviceN e overprint.
+- **Defeito de cor crítico: preto RGB (0,0,0) tende a virar 'rich black' CMYK (4 cores) em vez de K puro — ruim para texto de corpo em offset.** _(🔴 alto · conf. high)_
+  - Bug Ghostscript #698723 ('convert rgb pdf to cmyk with icc profile yields wrong black'). Texto preto convertido para rich black causa halos de registro em impressão offset (especialmente papel jornal/POD). Mitigações: -dKPreserve (preservação de preto CMYK->CMYK, não resolve RGB->CMYK puro), -dBlackPtComp, ou escolher perfil/estratégia adequada; o controle fino de UCR/BG é bypassado quando o color management ICC está ativo. NZZ resolveu isso em código próprio iterando pixels e removendo tinta dos canais não-K quando K domina.
+- **KDP aceita RGB diretamente; só IngramSpark/gráficas offset exigem PDF/X-1a CMYK — isso muda o cálculo de risco por destino.** _(🟠 médio · conf. high)_
+  - Amazon KDP aceita interior em sRGB OU CMYK (PDF único <40MB, transparências achatadas) e faz a conversão para CMYK internamente — logo, para KDP o render RGB do navegador já serve (com ressalva de shift em cores muito saturadas; KDP recomenda prova física). IngramSpark exige PDF/X-1a:2001, CMYK, 300dpi, bleed; capa wraparound CMYK 300dpi. RIPs modernos (inclusive IngramSpark) preferem PDF/X-4 a X-1a, mas X-1a é o mínimo aceito.
+- **Fidelidade de cor do Ghostscript é inferior a ferramentas de prepress dedicadas (Adobe/callas); para offset crítico isso é blocker parcial.** _(🔴 alto · conf. medium)_
+  - Adobe (Acrobat/PDF Services, InDesign export PDF/X-1a) usa motor de cor maduro com perfil padrão U.S. Web Coated (SWOP) v2 e opção 'Convert All Colors to CMYK' / 'Preserve CMYK values'. callas pdfToolbox é o padrão-ouro de preflight/conversão PDF/X com controle de overprint, flattening e ink management. Ghostscript funciona e é gratuito, mas tem bugs de preto conhecidos, menos controle de rendering intent por objeto na prática, e qualidade percebida menor. Adobe PDF Services API não expõe claramente conversão CMYK/PDF/X via API REST (recurso é de Acrobat desktop/Express).
+- **Caso real de produção (NZZ) abandonou a preservação vetor->print e rasterizou tudo para TIFF CMYK — sinal forte do quão difícil é o caminho navegador->offset.** _(🟠 médio · conf. high)_
+  - NZZ web-to-print: Puppeteer gera PNG (tipografia de impressão + RGB) -> ImageMagick converte para TIFF CMYK no perfil correto (WAN-IFRA ISO Newspaper 26v4, 1200 DPI) -> libtiff tiff2pdf embrulha em PDF 1.3. Ou seja, mesmo um time profissional preferiu rasterizar a 1200dpi e tratar o preto pixel-a-pixel em vez de confiar em vetor+texto pelo pipeline do navegador. Trade-off: perde nitidez vetorial/texto selecionável, ganha controle total de cor/tinta.
+- **Alternativa server-side com CMYK nativo existe mas cada opção tem lacuna: melhor controle, sem reusar o render do navegador.** _(🔴 alto · conf. high)_
+  - Typst tem cmyk() nativo (Device CMYK), mas NÃO suporta PDF/X (issue #6012, aberto mar/2025: 'currently typst cannot be used as part of a professional printing workflow') e CMYK é desabilitado em PDF/A; suporta PDF/A completo desde 0.14.0. PDFKit (foliojs) não tem CMYK nativo no core — só o fork pdfkit-cmyk (abandonado, ~7 anos sem release) e suporte parcial a spot em anotações; spot color é issue aberta #756. pdf-lib não tem CMYK/spot/PDF-X de primeira classe. LaTeX/Typst/SILE controlam cor mas ainda dependem de Ghostscript externo para o selo PDF/X-1a final.
+- **Caminho de MENOR risco depende do destino: para KDP, render RGB basta; para IngramSpark/offset, motor CMYK-nativo + selo PDF/X é menos arriscado que navegador+Ghostscript.** _(🔴 alto · conf. medium)_
+  - Ranking de risco para offset crítico: (1) menos arriscado = layout server-side com CMYK nativo controlado (Typst/InDesign Server/callas) e validação por preflight; (2) intermediário = navegador para layout RGB + Ghostscript press-ready para CMYK/PDF/X-1a, aceitando ajuste manual do preto e prova física; (3) mais arriscado = confiar cegamente na conversão automática sem preflight/prova. Em todos os casos, prova física e preflight (callas/Acrobat/verapdf-equivalente para X) são mandatórios antes de aprovar.
+
+### Bibliotecas / ferramentas
+- **Puppeteer / Playwright (Chromium Page.printToPDF)** — Renderiza HTML/CSS e gera o PDF base — porém apenas em RGB, sem CMYK/PDF-X/ICC/spot/overprint _(maturidade: production; Apache-2.0)_ — https://github.com/puppeteer/puppeteer/issues/6480
+- **Ghostscript (pdfwrite)** — Pós-processa: converte RGB->CMYK, aplica perfil ICC e gera o selo PDF/X-1a (OutputIntent) preservando texto/vetor _(maturidade: mature; AGPL-3.0 (comercial via Artifex))_ — https://ghostscript.readthedocs.io/en/latest/GhostscriptColorManagement.html
+- **vibranthq/press-ready** — Wrapper Node/CLI de referência sobre Ghostscript que produz PDF/X-1a CMYK a partir de PDF RGB (flags e PDFX_def prontos) _(maturidade: mature; MIT)_ — https://github.com/vibranthq/press-ready
+- **callas pdfToolbox** — Padrão-ouro de preflight e conversão PDF/X (overprint, flattening, ink management, fidelidade de cor superior) _(maturidade: production; Comercial (proprietário))_ — https://www.callassoftware.com/
+- **Adobe PDF Services API / Acrobat / InDesign** — Conversão CMYK e export PDF/X-1a com motor de cor maduro (SWOP v2); API REST não expõe claramente CMYK/PDF-X _(maturidade: production; Comercial)_ — https://helpx.adobe.com/acrobat/using/color-conversion-ink-management-acrobat.html
+- **Typst** — Alternativa de layout server-side com cmyk() nativo; mas SEM PDF/X (issue #6012) — precisa de Ghostscript para o selo final _(maturidade: production; Apache-2.0)_ — https://github.com/typst/typst/issues/6012
+- **PDFKit (foliojs) / pdfkit-cmyk** — Geração programática de PDF em Node; core sem CMYK nativo, fork CMYK abandonado, spot apenas parcial _(maturidade: abandoned; MIT)_ — https://github.com/foliojs/pdfkit/issues/756
+- **pdf-lib** — Manipulação/criação de PDF em JS puro; sem suporte de primeira classe a CMYK/spot/PDF-X _(maturidade: mature; MIT)_ — https://pdf-lib.js.org/
+- **ImageMagick + libtiff (tiff2pdf)** — Rota de rasterização CMYK (abordagem NZZ): converte PNG RGB -> TIFF CMYK no perfil -> PDF; perde vetor/texto _(maturidade: mature; ImageMagick / libtiff (permissivas))_ — https://medium.com/nzz-open/how-we-built-a-web-to-print-system-into-our-graphics-toolbox-q-57ee3e8a99cb
+- **mutool (MuPDF)** — Alternativa a Ghostscript para manipulação de PDF; menos foco em conversão de cor PDF/X que pdfwrite _(maturidade: mature; AGPL-3.0 (comercial via Artifex))_ — https://artifex.com/blog/choosing-between-ghostscript-and-mupdf
+
+### Perguntas em aberto
+- Qual perfil ICC de saída o destino final exige? (ex.: FOGRA39/FOGRA51 para offset EU, GRACoL/SWOP US, JapanColor) — press-ready só traz JapanColor2001Coated por padrão; é preciso fornecer o perfil correto.
+- O destino é majoritariamente KDP (aceita RGB, baixa o risco para baixo) ou IngramSpark/gráfica offset (exige PDF/X-1a CMYK, risco alto)? Isso muda toda a arquitetura.
+- Há cores spot (Pantone) ou overprint no design? Se sim, o caminho navegador->Ghostscript é insuficiente e exige motor CMYK nativo ou callas.
+- Qual a tolerância a shift de cor sem prova física? O preto de texto precisa ser garantidamente K puro (100% K, 0 CMY)?
+- O conteúdo tem transparência/blend modes? PDF/X-1a proíbe; o flattening pode rasterizar regiões e degradar texto/vetor.
+- Validação de conformidade PDF/X-1a: qual preflight será usado (callas, Acrobat Preflight, ou checagem própria) antes de submeter?
+- Vale testar PDF/X-4 (aceito por RIPs modernos da IngramSpark, preserva transparência) em vez de forçar X-1a?
+
+<details><summary>Fontes (21)</summary>
+
+- https://github.com/puppeteer/puppeteer/issues/6480
+- https://github.com/puppeteer/puppeteer/issues/2685
+- https://ghostscript.readthedocs.io/en/latest/GhostscriptColorManagement.html
+- https://ghostscript.readthedocs.io/en/latest/Use.html
+- https://bugs.ghostscript.com/show_bug.cgi?id=698723
+- https://github.com/vibranthq/press-ready
+- https://raw.githubusercontent.com/vibranthq/press-ready/master/src/ghostScript.ts
+- https://github.com/typst/typst/issues/6012
+- https://github.com/typst/typst/issues/3002
+- https://typst.app/docs/changelog/0.14.0/
+- https://typst.app/docs/reference/visualize/color/
+- https://github.com/foliojs/pdfkit/issues/756
+- https://github.com/foliojs/pdfkit/issues/486
+- https://www.npmjs.com/package/pdfkit-cmyk
+- https://cambric.pub/guides/kdp-requirements/
+- https://www.ingramspark.com/hubfs/downloads/user-guide.pdf
+- https://medium.com/nzz-open/how-we-built-a-web-to-print-system-into-our-graphics-toolbox-q-57ee3e8a99cb
+- https://bitcrowd.dev/chromic-pdf/
+- https://helpx.adobe.com/acrobat/using/color-conversion-ink-management-acrobat.html
+- https://helpx.adobe.com/express/web/print-and-export/export-pdfs-with-cmyk-color-profile.html
+- https://artifex.com/blog/choosing-between-ghostscript-and-mupdf
+
+</details>
+
+---
+## O que torna o Adobe InDesign tecnicamente especial para diagramação de livros, e quais funções um concorrente "leve" focado em contorno de imagem com texto deveria importar
+
+**Resumo:** O "fosso" técnico do InDesign para livros não é uma feature única, mas a combinação de um motor de composição de parágrafo de qualidade tipográfica (Adobe Paragraph Composer + kerning óptico + H&J avançada), automação por estilos em cascata (parágrafo/caractere/objeto + GREP styles + estilos aninhados) e infraestrutura de fluxo de páginas (threaded text, master pages, baseline grid). Para um concorrente leve cujo diferencial é "contorno de imagem com texto" (text wrap), o ESSENCIAL é: um motor de composição de linha que respeite obstáculos não-retangulares (text wrap por bounding box, por alfa/detect-edges e por forma vetorial editável), frames de texto encadeados, estilos de parágrafo/caractere, e export PDF print-ready com bleed/margens (KDP exige 0,125" de bleed e 300 DPI). É IMPORTANTE: baseline grid, master pages, kerning óptico, TOC automático. É OVERKILL para self-publishing de ficção: GREP styles, notas de rodapé, tabelas complexas, cores spot/overprint, preflight profissional, data merge, scripting, IDML. O maior risco de implementação não é a UI do text wrap, mas o algoritmo de quebra de linha que precisa testar cada fragmento de linha contra um polígono/contorno a cada reflow - na web isso é parcialmente resolvível com CSS shape-outside (url() + shape-image-threshold lê o canal alfa automaticamente), mas com limitações severas (só funciona em floats, só envolve um lado).
+
+### Achados
+- **O diferencial tipográfico central do InDesign é o Adobe Paragraph Composer combinado com kerning óptico e H&J avançada, não uma feature isolada** _(🟠 médio · conf. high)_
+  - O Adobe Paragraph Composer analisa MÚLTIPLAS linhas simultaneamente para otimizar hifenização e quebras (otimização global ao nível do parágrafo, conceitualmente similar ao Knuth-Plass/TeX), enquanto editores leves usam quebra gulosa linha-a-linha. Kerning: InDesign usa 'metrics' (pares de kerning embutidos na fonte: LA, To, Tr, Wa, WA, We, Yo etc.) por padrão, mas oferece kerning 'óptico' que ajusta espaçamento pela FORMA dos glifos - melhor quando se mistura fontes/tamanhos ou em justificação extrema. Replicar a qualidade do Paragraph Composer é o item tipográfico mais difícil de igualar.
+- **Para um produto cujo gancho é 'contorno de imagem com texto', o text wrap por ALFA/detect-edges e por forma é o coração e deve ser ESSENCIAL** _(🔴 alto · conf. high)_
+  - InDesign oferece 6 modos de contorno no painel Text Wrap (Window > Text Wrap): Bounding Box (retângulo da imagem), Detect Edges (detecção automática de bordas), Alpha Channel (usa canal alfa salvo - a transparência xadrez do Photoshop é reconhecida como alfa), Photoshop Path (caminho salvo), Graphic Frame e Same as Clipping. Controles: offset (positivo afasta o texto, negativo aproxima), 'include inside edges' (texto preenche buracos internos), e opções 'wrap both sides / away from spine'. Este é exatamente o recurso que o produto quer destacar.
+- **Na web, CSS shape-outside resolve PARCIALMENTE o text wrap por contorno e lê o canal alfa nativamente, reduzindo muito o esforço - mas tem limitações que afetam diagramação de livro** _(🟠 médio · conf. high)_
+  - shape-outside aceita circle(), ellipse(), polygon(), inset() e url('imagem.png') - neste último o navegador AMOSTRA O CANAL ALFA e cria o contorno; shape-image-threshold (0.0-1.0, padrão 0.5) controla a partir de qual alfa o pixel conta como sólido (equivalente direto ao Alpha Channel + Detect Edges do InDesign). shape-margin = offset. Baseline 'widely available' desde jan/2020 (Chrome 37+, Firefox 62+, Safari 10.1+). LIMITAÇÕES CRÍTICAS: (1) só se aplica a elementos float; (2) o texto só envolve UM lado (float-left envolve à direita) - NÃO faz texto fluir dos dois lados de uma imagem central, que é comum em diagramação de livro; (3) imagens cross-origin exigem CORS. Para envolver os dois lados é preciso truques (dois pseudo-floats) ou um motor próprio.
+- **O risco técnico real do text wrap não está na UI nem no contorno visual, mas no algoritmo de quebra de linha que testa fragmentos contra o polígono a cada reflow** _(🔴 alto · conf. high)_
+  - Para texto que envolve forma arbitrária, cada linha tem largura/posição variável conforme a altura (uma 'banda' horizontal interceptada pelo contorno). Polígonos com dezenas de pontos custam mais porque o motor de layout precisa testar cada fragmento de linha contra a forma a cada reflow; o caminho por imagem ainda adiciona decode + amostragem do alfa. Se o produto usar o motor do navegador (CSS shape-outside) herda isso de graça mas com as limitações acima; se construir motor próprio (canvas/PDF), precisa reimplementar interseção banda-contorno + quebra de linha (idealmente Knuth-Plass para qualidade tipográfica de livro, que é dynamic programming ao nível do parágrafo).
+- **ESSENCIAIS além do text wrap: threaded text (frames encadeados), estilos de parágrafo+caractere, e export PDF print-ready com bleed/margens** _(🟠 médio · conf. high)_
+  - Threaded text faz o texto fluir automaticamente entre frames/páginas (overflow cria continuação) - sem isso não há livro de múltiplas páginas. Estilos de parágrafo/caractere são automação básica esperada. Export: KDP exige bleed de 0,125" (3,2mm) nas bordas top/bottom/outside, margens externas mínimas 0,25" (sem bleed) ou 0,375" (com bleed), gutter (margem interna) maior que a externa, imagens a 300 DPI mínimo, e PDF formatado 0,25" mais alto e 0,125" mais largo que o trim (6x9" é o tamanho mais comum). Sem PDF correto o livro é rejeitado.
+- **IMPORTANTES (não-bloqueantes no MVP): baseline grid, master pages, kerning óptico, TOC automático, estilos de objeto** _(🟠 médio · conf. high)_
+  - Baseline grid alinha o texto na mesma linha de base entre colunas/páginas espelhadas (ritmo vertical) - muito valorizado em livro profissional mas livros de ficção simples sobrevivem sem. Master pages automatizam elementos repetidos (cabeçalho, número de página). TOC automático é esperado em não-ficção. Estilos de objeto = estilo reutilizável para a aparência de frames/imagens (inclui as próprias configs de text wrap, o que casa bem com o foco do produto). Estilos aninhados (nested styles) aplicam estilo de caractere a trechos por regra (ex.: drop cap, lead-in).
+- **OVERKILL para self-publishing de ficção (ignorar no MVP, talvez nunca): GREP styles, notas de rodapé/fim, tabelas complexas, cores spot/overprint, preflight profissional, data merge, scripting, IDML** _(🟡 baixo · conf. high)_
+  - Ferramentas dedicadas a indie authors provam o ponto: Vellum (US$249, só Mac) e Atticus (US$147, multiplataforma) dominam o mercado e NÃO oferecem GREP, spot color, overprint, preflight ou data merge - focam em capa/copyright/back-matter pré-populados e export PDF+EPUB. Affinity Publisher (US$70 compra única) é o concorrente direto do InDesign e mesmo assim historicamente faltou notas de rodapé/endnotes, PDF acessível com tags, data merge e scripting. Spot/overprint e preflight só importam para gráfica offset profissional (POD digital como KDP usa CMYK composto). GREP styles (estilizar por regex) é poder de usuário avançado. Citação real de indie authors: 'o que levava 5 dias num programa de layout leva 20 minutos' - eles querem velocidade, não controle profissional.
+- **IDML como formato de interoperabilidade é desejável para 'não ilhar' o usuário, mas é caro e mal documentado - baixa prioridade** _(🟡 baixo · conf. medium)_
+  - IDML é XML baseado em pacote ZIP/UCF (árvore de XMLs); ICML é o snippet de história equivalente. A especificação formal NÃO é mantida publicamente desde 2012 e está no 'IDML Cookbook' do SDK, que exige conta Adobe. Implementar export/import IDML fiel é trabalhoso e o alvo é móvel. Para um produto leve focado em self-publishing, exportar PDF (impressão) + EPUB cobre 95% da necessidade; IDML só interessa a quem entrega arquivo editável para gráfica/editora - segmento profissional que não é o foco.
+- **Posicionamento estratégico: NÃO competir de frente significa cortar deliberadamente o motor de composição global e os recursos de pré-impressão profissional, e ganhar em facilidade + o gancho de text wrap por imagem** _(🟠 médio · conf. medium)_
+  - O fosso do InDesign (Paragraph Composer de qualidade, GREP, preflight, IDML, ecossistema de plugins/templates INDD) é tanto sua força quanto sua complexidade - é justamente o que afasta self-publishers (assinatura US$21/mês + curva de aprendizado). Vellum/Atticus venceram sendo OPINIONADOS e simples. O diferencial defensável do novo produto é entregar um text wrap por contorno/alfa REALMENTE fácil (que no próprio InDesign é considerado fiddly) numa ferramenta de baixa fricção, aceitando quebra de linha 'boa o suficiente' (gulosa ou shape-outside) em vez de qualidade TeX.
+
+### Bibliotecas / ferramentas
+- **CSS shape-outside / shape-image-threshold / shape-margin** — Implementa text wrap por contorno no navegador lendo o canal alfa da imagem automaticamente (shape-image-threshold = limiar de alfa, análogo ao Alpha Channel/Detect Edges do InDesign); shape-margin = offset. Caminho mais barato para o recurso-âncora do produto se for web-based _(maturidade: production; Padrão web (W3C CSS Shapes), sem licença)_ — https://developer.mozilla.org/en-US/docs/Web/CSS/shape-outside
+- **bramstein/typeset (Knuth-Plass em JavaScript)** — Implementação do algoritmo de quebra de linha do TeX em JS - base para um motor de composição de qualidade de livro (justificação + hifenização otimizadas ao nível do parágrafo) caso o produto não use o motor do navegador _(maturidade: mature; verificar no repo (tipicamente permissiva, BSD/MIT))_ — https://github.com/bramstein/typeset/
+- **alex-panda/KnuthPlassLinebreak** — Outra implementação de referência do Knuth-Plass (dynamic programming minimizando 'badness') para quem for construir motor de composição próprio em vez de depender do CSS _(maturidade: experimental; verificar no repo)_ — https://github.com/alex-panda/KnuthPlassLinebreak
+- **IDML (Adobe InDesign Markup Language)** — Formato de intercâmbio editável do InDesign (ZIP/UCF de XMLs; ICML para histórias). Relevante apenas se o produto quiser interoperar com fluxos profissionais - spec não mantida publicamente desde 2012 _(maturidade: mature; Especificação Adobe (acesso via conta no SDK))_ — https://www.idml.dev/en.html
+- **Adobe Paragraph Composer (referência conceitual)** — Benchmark de qualidade a ser igualado/deliberadamente abandonado: composição multi-linha ao nível do parágrafo. Define o teto de qualidade tipográfica que separa InDesign dos editores leves _(maturidade: production; Proprietário Adobe)_ — https://helpx.adobe.com/indesign/desktop/format-and-style-text/tabs-indents-and-spacing/about-kerning-and-tracking.html
+
+### Perguntas em aberto
+- O produto será web (pode herdar CSS shape-outside e o motor de layout/quebra de linha do navegador) ou nativo/canvas (precisa reimplementar interseção banda-contorno + Knuth-Plass)? Essa decisão muda radicalmente o risco do recurso-âncora.
+- O text wrap precisa envolver os DOIS lados de uma imagem central (comum em livro)? CSS shape-outside sozinho não faz isso - exige motor próprio ou truques, elevando o risco de medium para high.
+- O alvo é ficção (texto corrido, layout simples - Vellum/Atticus bastam) ou não-ficção ilustrada/infantil/poesia (onde text wrap por imagem é realmente diferencial)? Define se o gancho do produto tem mercado.
+- Qual o destino de export prioritário: PDF print-ready para POD (KDP/IngramSpark, exige bleed+300DPI+CMYK) e/ou EPUB? CMYK e perfis de cor adicionam complexidade ao pipeline de export.
+- Vale algum nível de import (DOCX do manuscrito) já que autores escrevem fora da ferramenta? É o fluxo real de self-publishing e foi citado como motivo de adoção do Atticus/Vellum.
+- Há necessidade de baseline grid de verdade (alinhamento entre páginas espelhadas) ou ritmo vertical 'aproximado' é aceitável para o público-alvo?
+
+<details><summary>Fontes (21)</summary>
+
+- https://helpx.adobe.com/indesign/using/text-wrap.html
+- https://developer.mozilla.org/en-US/docs/Web/CSS/shape-outside
+- https://helpx.adobe.com/indesign/desktop/format-and-style-text/tabs-indents-and-spacing/about-kerning-and-tracking.html
+- https://helpx.adobe.com/indesign/using/styles.html
+- https://helpx.adobe.com/in/indesign/using/drop-caps-nested-styles.html
+- https://helpx.adobe.com/indesign/using/preflighting-files-handoff.html
+- https://helpx.adobe.com/indesign/using/preparing-pdfs-service-providers.html
+- https://helpx.adobe.com/indesign/desktop/automation-and-scripting/merge-data/data-merging-overview.html
+- https://www.bookdesignmadesimple.com/book/baseline-grid/
+- https://www.qinprinting.com/blog/an-in-depth-guide-to-book-layouts-with-adobe-indesign/
+- https://design.tutsplus.com/articles/affinity-publisher-vs-indesign-which-is-better--cms-108799
+- https://blog.lulu.com/affinity-publisher-an-indesign-alternative/
+- https://indieauthormagazine.com/an-inside-look-at-formatting-software-options/
+- https://www.dabblewriter.com/articles/atticus-alternatives
+- https://kdp.amazon.com/en_US/help/topic/GVBQ3CMEQW3W2VL6
+- https://kdp.amazon.com/en_US/help/topic/G201857950
+- https://www.idml.dev/en.html
+- https://www.oreilly.com/library/view/xml-publishing-with/9781449397234/ar01s12.html
+- https://en.wikipedia.org/wiki/Knuth%E2%80%93Plass_line-breaking_algorithm
+- https://github.com/bramstein/typeset/
+- https://css-tricks.com/almanac/properties/s/shape-outside/
+
+</details>
+
+---
+## Motor de composição/diagramação de texto para um editor tipo InDesign no navegador
+
+**Resumo:** Não existe um motor PRONTO embarcável que entregue qualidade tipo InDesign/Word no navegador: o caminho realista é montar um pipeline de componentes maduros (shaping, segmentação, line-breaking) sobre um modelo de documento próprio, renderizando em canvas/WebGL — exatamente o que Figma fez ("um navegador dentro do navegador", C++ via emscripten, com layout de texto próprio). O navegador nativo (contenteditable + CSS) é inadequado para diagramação profissional: a justificação é greedy (não Knuth-Plass), não há baseline grid, controle de viúvas/órfãs é fraco, e — crítico — a web não expõe outlines de glifos nem tabelas de kerning de forma portável (a Local Font Access API só existe no Chromium desktop). Os tijolos de baixo nível são sólidos e MIT/Apache: HarfBuzz.js (shaping/kerning/ligaturas/OpenType, v1.4.0 ativo), ICU4X segmenter (UAX#14 line break, WASM), fontkit/opentype.js (parsing/outlines), e implementações JS de Knuth-Plass (robertknight/tex-linebreak, v0.9.0). A camada que NÃO existe pronta e portável é a composição multi-frame com texto fluindo entre frames encadeados ("story" do InDesign) — isso é construção custom. Typst (Rust, Apache-2.0, embeddável, com Knuth-Plass/hifenização/viúvas-órfãs) é o engine completo mais próximo, mas é orientado a documento/markup, não a edição WYSIWYG interativa, e o app web da Typst é proprietário. Estimativa: ~40-60% reuso de bibliotecas para shaping/breaking/parsing; o modelo de documento, o motor de fluxo entre frames, o sistema de páginas/grid e o render interativo são custom.
+
+### Achados
+- **O navegador justifica texto com algoritmo greedy (linha-a-linha), não Knuth-Plass de parágrafo inteiro; isso produz espaçamento entre palavras visivelmente pior e mais linhas que o ótimo.** _(🟠 médio · conf. high)_
+  - Knuth-Plass minimiza a 'demerit' (raggedness) sobre o parágrafo inteiro via programação dinâmica, enquanto o navegador decide cada quebra olhando só a linha atual. Na demo do bramstein/typeset, KP encontra 9 linhas onde o navegador usa 10. text-wrap:pretty (Chrome 117+, Safari 26+, ausente no Firefox em meados de 2026) melhora rag/órfãs mas NÃO é Knuth-Plass completo nem dá controle programático. Adobe usa o hz-program de Zapf/URW no InDesign; não há equivalente nativo na web.
+- **A web não dá acesso portável a outlines de glifos nem a tabelas de kerning/GPOS/GSUB — o 'maior ponto de dor' citado pelo próprio time da Figma e ainda não resolvido em 2026.** _(🔴 alto · conf. high)_
+  - A Local Font Access API (queryLocalFonts() + FontData.blob() com bytes SFNT crus incluindo glyf/GPOS/GSUB) só está disponível em Chromium DESKTOP (Chrome/Edge); não há suporte em Safari, Firefox, nem mobile (Android/iOS). Não é Baseline, é experimental. Consequência: para shaping/kerning próprios é preciso o usuário fornecer/embarcar os arquivos de fonte (.otf/.ttf) e processá-los com fontkit/HarfBuzz, não usar fontes do sistema de forma confiável cross-browser.
+- **HarfBuzz.js é a base madura e correta para shaping (kerning, ligaturas, features OpenType, fontes variáveis) — mas NÃO faz line-breaking nem layout.** _(🟡 baixo · conf. high)_
+  - Port WebAssembly do HarfBuzz C++ oficial. v1.4.0 lançada em 15/jun/2026, 48 releases, MIT. shape() recebe Font+Buffer e aplica calt/clig/curs/dist/kern/liga/rclt; retorna glifos posicionados com advances/offsets. Higher-level (quebra de linha, fluxo, páginas) está explicitamente fora de escopo — o desenvolvedor constrói a camada de layout por cima. Alternativa rustybuzz-wasm é ~20x mais rápida que opentype.js em benchmarks.
+- **Existem implementações JS reais e usáveis de Knuth-Plass, mas com ressalvas de maturidade e integração DOM frágil.** _(🟠 médio · conf. high)_
+  - robertknight/tex-linebreak: KP completo, hifenização via hypher, justifyContent() para HTML, render em canvas/HTML/SVG/WebGL, MIT-style, v0.9.0 (abr/2026), ~190 stars; alerta que modificar o DOM para inserir quebras 'pode ser lento em documentos grandes' e não é float-aware. egilll/tex-linebreak2: extensão beta, MIT, NÃO suporta colunas nem contenteditable. bramstein/typeset (BSD-2): prova de conceito, autor declara que 'provavelmente nunca' será production-ready, sem hifenização/OpenType. Para canvas-based o KP é viável; integrar KP em contenteditable é hostil.
+- **Para segmentação de linha (onde PODE quebrar) o padrão correto é ICU4X segmenter (UAX#14), disponível em WASM para browser/Node.** _(🟡 baixo · conf. high)_
+  - icu_segmenter (Rust/crates.io) faz line/word/grapheme/sentence segmentation compatível com UAX#14 e UAX#29, com tailoring para CSS line-break/word-break; port WASM oficial roda em browsers. ~19-47% mais rápido que ICU4C. Resolve corretamente CJK, e é o input correto para o Knuth-Plass (KP precisa dos pontos de quebra candidatos). Hifenização separada usa patterns de Liang (hypher / TeX patterns do CTAN).
+- **Nenhum dos editores ricos (ProseMirror, Lexical, Slate, TipTap) é projetado para layout não-linear, paginação ou fluxo de texto entre frames — mas ProseMirror tem o modelo de documento mais forte para servir de base.** _(🔴 alto · conf. high)_
+  - ProseMirror: schema estrito que torna estados inválidos impossíveis, separação clara state/view/model/transform, MIT, maduro — apontado como a fundação mais adaptável. Lexical (Meta, MIT, pre-1.0) não tem 'pure decorations', pior para overlays de layout. Slate (MIT) dá controle total mas você implementa tudo. TipTap deriva schema das extensões (MIT core). TODOS: 'none are explicitly designed for non-linear layouts or pagination' — o modelo 'story que flui entre frames encadeados' é desenvolvimento custom significativo sobre qualquer um deles. O editor seria fonte-de-verdade do conteúdo; o motor de composição/frames seria uma camada separada.
+- **Typst é o engine completo open-source mais próximo de um 'InDesign embarcável', mas é document/markup-driven e o app interativo é proprietário.** _(🟠 médio · conf. high)_
+  - Compilador em Rust, licença Apache-2.0, explicitamente embeddável como crate Rust ('embed the Typst compiler in your own applications'), com Knuth-Plass, hifenização, controle de viúvas/órfãs (melhorado em releases recentes), colunas/floats, fontes variáveis. PORÉM: o web app da Typst é 'proprietary, commercial software' — só o compilador é aberto. Roda em browser via WASM (ex.: wasm-typst-studio-rs, comunidade), mas é compile-to-PDF/SVG, não edição WYSIWYG de frames em tempo real. Reusável como motor de composição server-side ou WASM, não como editor pronto.
+- **O padrão de arquitetura comprovado para ferramentas de design na web é render próprio em canvas/WebGL com layout de texto custom — não contenteditable/CSS.** _(🟠 médio · conf. high)_
+  - Figma: editor escrito em C++ cross-compilado para JS via emscripten, com 'seu próprio DOM, seu próprio compositor, seu próprio motor de layout de texto', renderizando tudo em WebGL, porque 'text layout é inconsistente entre browsers e até no mesmo browser em plataformas diferentes'. Dropflow (open-source, chearon, ~5 anos de trabalho) é um motor de layout CSS2 que renderiza em <canvas>/Node, já usado em produção (spreadsheet do CellEngine); suporta float/inline-block/vertical-align mas NÃO flexbox/grid e paginação/fragmentação ainda em progresso; sem acessibilidade (canvas). Confirma que a abordagem custom-canvas é a viável, com alto custo.
+- **Recursos de microtipografia/vertical do navegador estão incompletos: baseline grid não existe como primitiva CSS, viúvas/órfãs têm suporte irregular, e o trim de leading só chegou recentemente e parcial.** _(🟠 médio · conf. high)_
+  - Não há baseline grid nativo (alinhar todas as linhas a uma grade vertical comum) — precisa ser computado manualmente. text-box-trim/text-box-edge (ex-leading-trim): Chrome/Edge desde v133, Safari 18.2, Firefox NÃO (meados 2026); não é Baseline. orphans/widows CSS existem mas com suporte e granularidade limitados e só em contexto de fragmentação/print. Hanging punctuation parcial. Conclusão: controle vertical fino de diagramação profissional precisa ser implementado no motor custom.
+- **fontkit e opentype.js cobrem parsing de fontes e extração de outlines, com fontkit mais completo para GSUB/GPOS/AAT.** _(🟡 baixo · conf. high)_
+  - Ambos MIT. fontkit: engine avançado (Node+browser), GSUB/GPOS, features AAT da Apple, subsetting, emoji colorido, extração de path de glifo. opentype.js: parser/writer OpenType/TrueType, mas suporte de features limitado (só liga/rlig declarados) e kerning via GPOS/kern. fontkit é geralmente recomendado sobre opentype.js para shaping/layout sério (ex.: discussão no penpot). Resolvem o lado 'ler a fonte e desenhar glifos'; não fazem shaping completo de scripts complexos como o HarfBuzz.
+
+### Bibliotecas / ferramentas
+- **HarfBuzz.js (harfbuzzjs)** — Text shaping: posicionamento de glifos, kerning, ligaturas, features OpenType (kern/liga/calt...), fontes variáveis. Camada de shaping do pipeline. _(maturidade: production; MIT)_ — https://github.com/harfbuzz/harfbuzzjs
+- **ICU4X icu_segmenter (+ WASM port)** — Segmentação de linha/palavra/grapheme (UAX#14/#29): gera os pontos de quebra candidatos que alimentam o line-breaking. Trata CJK corretamente. _(maturidade: production; Unicode-3.0 / permissiva)_ — https://docs.rs/icu_segmenter/
+- **robertknight/tex-linebreak** — Knuth-Plass em JS com hifenização (hypher), justificação, render para canvas/HTML/SVG/WebGL. Camada de quebra ótima de parágrafo. _(maturidade: mature; MIT)_ — https://github.com/robertknight/tex-linebreak
+- **egilll/tex-linebreak2** — Fork/extensão de tex-linebreak com integração DOM (texLinebreakDOM); beta, sem colunas nem contenteditable. _(maturidade: experimental; MIT)_ — https://github.com/egilll/tex-linebreak2
+- **bramstein/typeset** — Implementação histórica de Knuth-Plass em JS; referência/prova de conceito, autor diz que não será production-ready. _(maturidade: abandoned; BSD-2-Clause)_ — https://github.com/bramstein/typeset
+- **fontkit** — Parsing avançado de fontes (OpenType/TrueType/WOFF2), GSUB/GPOS/AAT, extração de outlines de glifos, subsetting. Lado de leitura de fonte/desenho. _(maturidade: production; MIT)_ — https://github.com/foliojs/fontkit
+- **opentype.js** — Parser/writer OpenType em JS, outlines e kerning; suporte de features limitado (liga/rlig). Alternativa mais leve a fontkit. _(maturidade: mature; MIT)_ — https://github.com/opentypejs/opentype.js
+- **foliojs/linebreak** — Implementação JS do Unicode Line Breaking (UAX#14) — alternativa pura-JS ao ICU4X para pontos de quebra. _(maturidade: mature; MIT)_ — https://github.com/foliojs/linebreak
+- **hypher / Liang TeX patterns** — Hifenização por padrões de Liang (multi-idioma, patterns do CTAN); alimenta os pontos de hifenização do Knuth-Plass. _(maturidade: mature; BSD/permissiva)_ — https://github.com/bramstein/hypher
+- **Typst (compilador)** — Engine de composição completo (KP, hifenização, viúvas/órfãs, colunas, fontes variáveis) embeddável como crate Rust / WASM. Candidato a motor pronto server-side ou WASM, NÃO editor WYSIWYG. _(maturidade: production; Apache-2.0 (app web é proprietário))_ — https://typst.app/open-source/
+- **SILE** — Sistema de composição baseado em frames (inspirado em InDesign), Knuth-Plass; standalone, sem bindings WASM oficiais para browser. Referência de arquitetura de frames. _(maturidade: mature; MIT)_ — https://github.com/sile-typesetter/sile
+- **ProseMirror** — Modelo de documento/editor com schema estrito — melhor fundação para o modelo 'story' (conteúdo), separado do motor de composição/frames. _(maturidade: production; MIT)_ — https://prosemirror.net/
+- **Lexical** — Editor da Meta, extensível por plugins; sem pure decorations, pior para overlays de layout; pre-1.0. _(maturidade: mature; MIT)_ — https://lexical.dev/
+- **Slate** — Editor de schema custom; controle total mas você implementa tudo. Opção quando o modelo de domínio vem primeiro. _(maturidade: mature; MIT)_ — https://www.slatejs.org/
+- **TipTap** — Wrapper sobre ProseMirror com schema gerado por extensões; acelera o básico, pode limitar customizações profundas de layout. _(maturidade: production; MIT (core))_ — https://tiptap.dev/
+- **Dropflow** — Motor de layout CSS2 que renderiza em <canvas>/Node sem browser; prova que a abordagem canvas+layout-custom é viável (float/inline-block/vertical-align). Sem flexbox/grid; paginação em progresso; sem a11y. _(maturidade: experimental; MIT)_ — https://github.com/chearon/dropflow
+- **Local Font Access API** — API web para enumerar fontes do sistema e ler bytes SFNT crus (glyf/GPOS/GSUB). Gargalo: só Chromium desktop, não é Baseline. _(maturidade: experimental; padrão web (WICG))_ — https://wicg.github.io/local-font-access/
+
+### Perguntas em aberto
+- Renderização: canvas/WebGL (à la Figma/Dropflow, controle total mas você reimplementa seleção, IME, acessibilidade, cópia) vs. DOM/SVG (reaproveita a11y e edição mas herda inconsistências e perde controle de layout)? Essa escolha define ~60% do esforço.
+- Fontes: o produto pode exigir que o usuário faça upload/embarque dos arquivos .otf/.ttf (viável cross-browser via fontkit/HarfBuzz) ou precisa usar fontes do sistema (só Chromium desktop via Local Font Access)? Isso muda a portabilidade radicalmente.
+- Vale embarcar Typst (Apache-2.0) como motor de composição via WASM e construir só a UI/edição por cima, aceitando o paradigma document/markup, ou o WYSIWYG interativo com fluxo entre frames exige motor próprio?
+- Qual o orçamento de performance para edição em tempo real? Knuth-Plass + shaping HarfBuzz por keystroke em documentos grandes precisa de incrementalidade (re-compor só o frame/parágrafo afetado) — arquitetura não trivial.
+- O escopo precisa de scripts complexos (árabe, índicos, CJK vertical) e features avançadas OpenType, ou latim + justificação fina já atende? O primeiro praticamente obriga HarfBuzz + ICU4X; o segundo permite stack JS mais leve.
+- Saída final: PDF/print-ready (CMYK, sangria, ICC — onde Scribus/Typst brilham) ou só tela/web? Print-ready acrescenta um pipeline inteiro (cores, separações, PDF/X).
+
+<details><summary>Fontes (40)</summary>
+
+- https://github.com/bramstein/typeset/
+- https://www.bramstein.com/working/
+- https://finaltype.de/en/topics/better-justification-for-the-web
+- https://en.wikipedia.org/wiki/Knuth%E2%80%93Plass_line-breaking_algorithm
+- https://github.com/robertknight/tex-linebreak
+- https://github.com/egilll/tex-linebreak2
+- https://www.npmjs.com/package/tex-linebreak
+- https://github.com/harfbuzz/harfbuzzjs
+- https://www.npmjs.com/package/harfbuzzjs
+- https://deepwiki.com/harfbuzz/harfbuzzjs
+- https://github.com/opentypejs/opentype.js/
+- https://opentype.js.org/
+- https://www.npmjs.com/package/fontkit
+- https://github.com/foliojs/linebreak
+- https://github.com/foliojs-fork/linebreak
+- https://tug.org/docs/liang/
+- https://docs.rs/icu_segmenter/latest/icu_segmenter/
+- https://github.com/echogarden-project/icu-segmentation-wasm
+- https://blog.unicode.org/2023/04/icu4x-12-now-with-text-segmentation-and.html
+- https://www.unicode.org/reports/tr14/
+- https://typst.app/open-source/
+- https://en.wikipedia.org/wiki/Typst
+- https://github.com/automataIA/wasm-typst-studio-rs
+- https://github.com/sile-typesetter/sile
+- https://www.tug.org/TUGboat/tb38-1/tb118cozens.pdf
+- https://liveblocks.io/blog/which-rich-text-editor-framework-should-you-choose-in-2025
+- https://prosemirror.net/docs/guide/
+- https://www.figma.com/blog/building-a-professional-design-tool-on-the-web/
+- https://news.ycombinator.com/item?id=39778570
+- https://github.com/chearon/dropflow
+- https://github.com/WICG/local-font-access
+- https://wicg.github.io/local-font-access/
+- https://developer.mozilla.org/en-US/docs/Web/API/Local_Font_Access_API
+- https://developer.chrome.com/docs/capabilities/web-apis/local-fonts
+- https://developer.chrome.com/blog/css-text-wrap-pretty
+- https://webkit.org/blog/16547/better-typography-with-text-wrap-pretty/
+- https://developer.mozilla.org/en-US/docs/Web/CSS/text-box-trim
+- https://developer.chrome.com/blog/css-text-box-trim
+- https://css-tricks.com/leading-trim-the-future-of-digital-typesetting/
+- https://en.wikipedia.org/wiki/Widows_and_orphans
+
+</details>
+
+---
+## Competitive landscape of browser-based DTP/layout tools and what it reveals about feasibility and effort for "lightweight InDesign in the browser with good text-wrap and print-perfect export"
+
+**Resumo:** Há um ecossistema real e maduro de DTP no navegador, mas ele se divide em duas classes claras. (1) Editores de layout "casual" (Canva, Marq/Lucidpress, Reedsy, Designrr) que fazem páginas no navegador mas só atingem qualidade de impressão por meio de conversão server-side. (2) Pipelines HTML/CSS-para-PDF print-grade (Pressbooks via PrinceXML; Vivliostyle via Chromium + press-ready/Ghostscript) que produzem PDF/X-1a/X-4 com CMYK, mas SEMPRE delegam a etapa de cor/CMYK a uma ferramenta de pós-processamento fora do navegador. O achado central, confirmado por múltiplas fontes técnicas: o navegador opera exclusivamente em sRGB e não há caminho nativo para CMYK/ICC/spot color — toda solução "print-perfect no navegador" na verdade renderiza RGB no cliente e converte para CMYK em servidor. Ferramentas verdadeiramente print-grade no navegador com bom text-wrap e WYSIWYG de frames de texto (VivaDesigner Web) existem mas são nicho, pouco polidas e raras — o que indica tanto uma lacuna real de mercado quanto a razão pela qual ela continua aberta: é tecnicamente caro. Para calibração de esforço: Affinity Publisher (desktop, não-navegador) levou ~8 meses de beta pública mais anos de engenharia numa empresa de ~90 pessoas; Canva tem 600-1.500 engenheiros. A lacuna existe, mas o "print-perfect" no título do projeto é a parte mais arriscada — não é resolvível puramente no navegador.
+
+### Achados
+- **Navegadores operam exclusivamente em sRGB; não existe caminho nativo no navegador para CMYK, perfis ICC ou cores spot (Pantone)** _(🔴 alto · conf. high)_
+  - Confirmado por análise técnica detalhada: as APIs do navegador (incluindo EyeDropper e color input) retornam sempre sRGB. pdf.js faz conversão CMYK->RGB com perda só para exibir. Round-trip RGB->CMYK é matematicamente impossível de inverter (mapeamento muitos-para-um: vários CMYK produzem o mesmo RGB na tela). Gerenciamento ICC completo exige WASM de 5-15MB (MuPDF/PDFium). Cores spot simplesmente não são suportadas por abordagens leves.
+- **Toda ferramenta web realmente print-grade resolve CMYK com pós-processamento server-side, não no navegador** _(🔴 alto · conf. high)_
+  - Pressbooks renderiza HTML/CSS e usa PrinceXML (comercial, ~US$2.500/ano por licença de serviço comercial) para gerar PDF/X-4 — Prince suporta RGB e CMYK nativamente. Vivliostyle renderiza via Chromium (RGB) e depois passa por 'press-ready' (vibranthq) que roda Ghostscript+poppler em Docker para gerar PDF/X-1a CMYK. Canva por padrão exporta RGB e oferece conversão CMYK opcional (propriedade 'cmyk' default true na API de parceiros) com PDF/X opcional. O padrão é universal: renderizar no cliente, converter cor no servidor.
+- **A conversão CMYK das ferramentas open-source é limitada a um único perfil ICC, o que compromete fidelidade de cor profissional** _(🔴 alto · conf. high)_
+  - O press-ready (motor de CMYK do Vivliostyle) suporta APENAS o perfil 'Japan Color 2001 Coated'. Não há suporte a US Web Coated (SWOP), FOGRA39/FOGRA51 (padrões europeus/brasileiros comuns), nem perfis arbitrários do cliente/gráfica. Maturidade modesta: ~94 estrelas no GitHub, última release v4.0.3 de agosto/2020. Isso significa que 'print-perfect' depende do perfil exigido pela gráfica do cliente.
+- **Marq (ex-Lucidpress) NÃO exporta CMYK nativamente, apesar de ser editor de layout no navegador** _(🟠 médio · conf. high)_
+  - Marq não suporta exportação em CMYK; só avisa o usuário quando há múltiplos tipos de cor no projeto. Imagens importadas mantêm seu CMYK/RGB original. Isso demonstra que mesmo um concorrente direto estabelecido no espaço de layout colaborativo no navegador deixou a cor profissional de fora — evidência de que é difícil/caro, não de que é desnecessário.
+- **Canva exporta PDF print com bleed/crop marks e conversão CMYK opcional, mas CMYK só no plano pago e sem perfil ICC documentado** _(🟠 médio · conf. high)_
+  - Fluxo: File > Download > PDF Print, com checkboxes de Crop marks e Bleed (bleed default 3000 microns; crop marks e bleed são mutuamente exclusivos na API). CMYK só para Canva Pro/Teams/Education/Nonprofits. Padrão PDF/X opcional (pdfX default false). A documentação de parceiros de impressão NÃO especifica qual perfil ICC é usado — sinal de que a cor 'profissional' é aproximada, e gráficas frequentemente reprocessam.
+- **Existe uma lacuna de mercado real entre ferramentas grátis/simples no navegador e desktop profissional, mas o meio é ocupado por SDKs web-to-print pagos** _(🟠 médio · conf. high)_
+  - Reedsy Studio (navegador, grátis) e similares cobrem EPUB e PDF print básico mas sem controle granular. InDesign/Affinity (desktop) cobrem o topo. O meio é preenchido por SDKs comerciais para desenvolvedores: IMG.LY CreativeEditor SDK, CHILI GraFx, Customer's Canvas, PrintUI, Design Huddle, Adobe InDesign Server. VivaDesigner Web é o raro 'InDesign no navegador' real (master pages, frames de texto, CMYK, spot, ICC, PDF/X, abre INDD/IDML) mas tem comunidade pequena, documentação limitada e interface pouco polida — a lacuna existe porque é cara de preencher bem.
+- **Text-wrap não-retangular é viável no navegador via CSS shape-outside (suporte ~96%), mas com limitações que afetam DTP profissional** _(🟠 médio · conf. medium)_
+  - shape-outside (circle/ellipse/polygon/imagem com alpha) está disponível em todos os navegadores desde jan/2020, ~96% de uso global. Limitações: só funciona em elementos floated; ajusta quebras de linha mas não ordem de leitura. Hifenização e justificação de qualidade tipográfica (controle fino de espaçamento entre palavras como no InDesign/H&J) NÃO são equiparáveis ao motor do InDesign no navegador puro — é uma área onde concorrentes falham e onde 'bom text-wrap' do projeto teria de provar valor real.
+- **Calibração de esforço: produtos DTP de qualidade exigem anos e equipes substanciais** _(🟠 médio · conf. high)_
+  - Affinity Publisher (desktop): primeiro teaser dez/2017, beta pública 30/ago/2018, lançamento 1.7 em jun/2019 (~8 meses só de beta), feito pela Serif (~90 funcionários, anos de base no PagePlus); adquirida pela Canva em mar/2024 por US$380M. Canva: fundada 2013, ~600-1.500 engenheiros, ~220M usuários mensais, valuation ~US$65B em 2025. A aquisição da Serif pela Canva sinaliza que mesmo o líder do navegador comprou expertise de DTP desktop em vez de construir print-grade no navegador internamente.
+- **Vivliostyle é a referência open-source mais próxima de 'render print no navegador' e é viável como base técnica** _(🟡 baixo · conf. high)_
+  - Projeto japonês open-source, motor de tipografia CSS baseado em navegador, suporta CSS Paged Media (footnotes, números de página, floats, headers de página), gera PDF a partir de HTML/CSS/EPUB. CLI gera PDF via Chromium e oferece --preflight press-ready para PDF/X-1a (requer Docker). Adotado por Fidus Writer (v3.5+) para geração de PDF. É a fundação reutilizável mais madura para a parte de renderização; a parte de UI WYSIWYG de frames e a fidelidade de cor permanecem como esforço próprio.
+
+### Bibliotecas / ferramentas
+- **Vivliostyle.js / vivliostyle-cli** — Motor open-source de tipografia CSS no navegador (CSS Paged Media) e geração de PDF via Chromium; base técnica reutilizável para a etapa de renderização print _(maturidade: production; AGPL-3.0 (verificar para uso comercial SaaS))_ — https://vivliostyle.org/
+- **press-ready (vibranthq)** — Pós-processador que converte PDF RGB em PDF/X-1a CMYK via Ghostscript+poppler em Docker; usado pelo Vivliostyle para a etapa de cor _(maturidade: mature; MIT (verificar no repo); release v4.0.3 ago/2020, ~94 estrelas — baixa atividade)_ — https://github.com/vibranthq/press-ready
+- **PrinceXML** — Conversor comercial HTML/CSS->PDF print-grade com suporte nativo a CMYK, perfis de cor, paged media, PDF/X; motor de PDF de impressão do Pressbooks _(maturidade: production; Comercial, ~US$2.500/ano por licença de serviço; grátis com marca d'água para uso não-comercial)_ — https://www.princexml.com/
+- **Ghostscript** — Conversão de espaço de cor RGB->CMYK e geração PDF/X subjacente ao press-ready; padrão de fato para conversão CMYK server-side _(maturidade: production; AGPL ou comercial (Artifex))_ — https://www.ghostscript.com/
+- **CSS shape-outside** — Recurso nativo do navegador para text-wrap não-retangular (polígono/círculo/imagem) — viabiliza 'bom text-wrap' no cliente _(maturidade: production; Padrão W3C (suporte ~96% desde jan/2020))_ — https://developer.mozilla.org/en-US/docs/Web/CSS/shape-outside
+- **cmyk-preview-toolkit** — Lib TS sem dependências para 'dual representation' (preservar CMYK fonte + preview sRGB) e snapping de paleta — mitiga o problema de cor no navegador sem WASM pesado _(maturidade: experimental; Não verificado (publicado pelo autor; ESM/CommonJS))_ — https://dev.to/vjmanoj/the-cmyk-problem-nobody-warns-you-about-when-building-a-pdf-editor-in-the-browser-3a02
+- **VivaDesigner Web Edition** — Concorrente direto: 'InDesign no navegador' real com master pages, frames de texto, CMYK, spot, ICC, PDF/X, importação INDD/IDML — referência de viabilidade e de lacuna (pouco polido) _(maturidade: mature; Comercial proprietária)_ — https://viva.systems/designer/
+- **IMG.LY CreativeEditor SDK / CHILI GraFx / Customer's Canvas / PrintUI / Design Huddle** — SDKs web-to-print comerciais que ocupam o 'meio' do mercado — concorrência indireta e prova de demanda por edição de layout print no navegador _(maturidade: production; Comercial proprietária)_ — https://img.ly/blog/best-web-to-print-editor-sdks-your-2025-guide/
+- **MuPDF / PDFium (via WASM)** — Motores de PDF com gerenciamento ICC completo, executáveis no navegador via WASM (5-15MB) — caminho para CMYK/ICC real no cliente, ao custo de peso _(maturidade: production; MuPDF: AGPL/comercial (Artifex); PDFium: BSD)_ — https://mupdf.com/
+
+### Perguntas em aberto
+- Quais perfis ICC as gráficas-alvo do projeto realmente exigem (FOGRA39/FOGRA51 na Europa/Brasil, GRACoL/SWOP nos EUA)? Se for além de Japan Color 2001, o press-ready padrão não basta e exige perfis customizados no Ghostscript.
+- O produto-alvo precisa de cores spot/Pantone reais? Se sim, nenhuma abordagem leve no navegador resolve — exige pipeline server-side dedicado e licenciamento Pantone.
+- O modelo de export será 100% client-side (privacidade/offline) ou aceita-se conversão de cor em servidor? Toda solução print-grade existente usa servidor — um requisito client-side puro de CMYK é essencialmente território inexplorado/inviável hoje.
+- O diferencial 'bom text-wrap' precisa de H&J de qualidade InDesign (controle de espaçamento, otimização de parágrafo tipo Knuth-Plass) ou o shape-outside + hyphens do navegador é suficiente para o público-alvo?
+- Qual é o segmento exato (autores self-publishing vs. designers profissionais vs. catálogos/web-to-print)? A lacuna e o nível de 'print-perfect' exigido mudam radicalmente entre eles.
+- Licenciamento: PrinceXML (~US$2.500/ano) e a possível AGPL do Vivliostyle/press-ready impõem custos/obrigações de copyleft que afetam o modelo de negócio SaaS — verificar compatibilidade antes de adotar.
+
+<details><summary>Fontes (25)</summary>
+
+- https://www.canva.com/help/margins-bleed-crop-marks/
+- https://www.canva.dev/docs/print-partnerships/reference/export-settings/
+- https://help.marq.com/downloading
+- https://help.marq.com/smart-check
+- https://dev.to/vjmanoj/the-cmyk-problem-nobody-warns-you-about-when-building-a-pdf-editor-in-the-browser-3a02
+- https://github.com/w3c/csswg-drafts/issues/2022
+- https://vivliostyle.org/
+- https://github.com/vivliostyle/vivliostyle-cli/blob/main/docs/special-output-settings.md
+- https://github.com/vibranthq/press-ready
+- https://www.npmjs.com/package/press-ready
+- https://en.wikipedia.org/wiki/Prince_(software)
+- https://www.princexml.com/
+- https://www.princexml.com/purchase/
+- https://guide.pressbooks.com/chapter/pdf-export-options/
+- https://pressbooks.com/self-publishing/how-to-print-your-book/
+- https://en.wikipedia.org/wiki/Affinity_Publisher
+- https://en.wikipedia.org/wiki/Serif_Europe
+- https://viva.systems/designer/
+- https://viva.systems/designer/indesign-user/
+- https://developer.mozilla.org/en-US/docs/Web/CSS/shape-outside
+- https://img.ly/blog/best-web-to-print-editor-sdks-your-2025-guide/
+- https://blog.lulu.com/vellum-review/
+- https://learn.designrr.io/en/articles/8039665-ebooks-ebook-formats-and-flipbooks
+- https://www.kotobee.com/en/products/author/export
+- https://research.contrary.com/company/canva
+
+</details>
+
+---
+## Viabilidade e esforço de construir "InDesign leve no navegador" (fluxo de texto entre páginas, text-wrap por imagem, export print-perfect) por 1 dev assistido por IA
+
+**Resumo:** O projeto é tecnicamente possível mas tem dois subsistemas que sozinhos dominam o risco e o esforço: (1) o motor de fluxo de texto entre frames/páginas, que NÃO pode ser delegado ao navegador — CSS Regions foi removido do Blink/WebKit e os polyfills existentes são lentos e incompletos demais para produção, forçando construção quase do zero de paginação + quebra de linha + medição de texto; e (2) o export "print-perfect" PDF/X com CMYK real, que o navegador é fundamentalmente incapaz de fazer com fidelidade (browsers só operam em sRGB; pdf-lib escreve DeviceCMYK mas não embute perfis ICC nem OutputIntent, requisitos de PDF/X-1a), exigindo um passo server-side com Ghostscript. O diferencial pedido — text-wrap por imagem — é o item mais sedutoramente perigoso: shape-outside nativo só funciona em elementos float (incompatível com frames absolutos de DTP), então um wrap "InDesign-grade" (contorno por alpha, wrap em ambos os lados, dentro do motor próprio) precisa ser implementado manualmente sobre o motor de texto próprio. Subsistemas como manipulação de objetos no canvas (Konva/Fabric), editor de rich text (ProseMirror/Lexical/Tiptap) e quebra de linha justificada (Knuth-Plass em JS já existe) têm reuso pesado e são de baixo/médio risco. Recomendação: tratar como projeto de 12-24 meses para 1 dev se feito sério; de-risk com 3 spikes baratos (fluxo de texto multi-frame, ida-e-volta CMYK/PDF-X validado, text-wrap por contorno) ANTES de qualquer UI; cortar escopo para frames de coluna retangulares + wrap retângulo/polígono manual + 1 perfil de gráfica fixo (FOGRA39) com pipeline Ghostscript server-side, preservando o diferencial do text-wrap sem entrar no buraco sem fundo de master pages, spot colors e preflight completo no MVP.
+
+### Achados
+- **CSS Regions (fluxo nativo de texto entre múltiplos contêineres) foi removido de todos os navegadores; não há caminho nativo para text-flow entre páginas/frames.** _(🔴 alto · conf. high)_
+  - A equipe do Blink propôs remover Regions para economizar ~10.000 de 350.000 linhas de código por baixa adoção; foi removido também dos demais browsers que o tinham. Os polyfills (Adobe; FremyCompany) são explicitamente 'not recommended for production', não batem performance nativa, e não suportam reflow em mudanças de DOM, nested flows, region-break nem @region styling. Relato real: 'really slow to layout a magazine' com o polyfill. Consequência: o motor de paginação/fluxo entre frames precisa ser construído do zero (medir caixa, encher frame, transbordar para o próximo, repaginar em edição).
+- **O navegador é incapaz de produzir CMYK fiel; PDF/X-1a verdadeiro exige pipeline server-side (Ghostscript) — não é entregável só no cliente.** _(🛑 BLOCKER · conf. high)_
+  - Browsers operam só em sRGB; render de CMYK via pdf.js é conversão lossy e RGB->CMYK não é inverso de CMYK->RGB (não há mapeamento 1:1). pdf-lib escreve DeviceCMYK no conteúdo mas NÃO embute perfis ICC nem OutputIntent — e PDF/X-1a EXIGE OutputIntent com ICC (ex.: FOGRA39), fontes embutidas e flatten de transparência. Caminho viável: gerar PDF base no cliente/servidor e converter/validar com Ghostscript ('-dPDFX') no servidor. veraPDF valida PDF/A e PDF/UA mas NÃO PDF/X — validação de PDF/X requer Acrobat Preflight ou pipeline próprio, aumentando o custo de QA.
+- **O diferencial pedido (text-wrap por imagem) não tem atalho nativo robusto: shape-outside só funciona em float e quebra em layouts absolutos/grid/flex típicos de DTP.** _(🔴 alto · conf. high)_
+  - shape-outside é Baseline desde jan/2020 e suporta polygon() de contorno arbitrário e shape-image-threshold sobre canal alpha — MAS 'only work on floated elements'; quebra flex/grid items. Frames de DTP são posicionados de forma absoluta, então não dá para reaproveitar shape-outside diretamente para wrap real entre frames. Wrap 'InDesign-grade' (contorno automático por alpha, wrap nos dois lados, dentro do motor próprio) tem que ser implementado à mão. A boa notícia: extração de contorno por alpha tem libs maduras (marching squares: MarchingSquares.js, d3-contour, contours.ts) que produzem polígonos reutilizáveis para alimentar o algoritmo de quebra de linha.
+- **Quebra de linha justificada de qualidade tipográfica já tem implementações JS reutilizáveis (Knuth-Plass), reduzindo risco desse sub-bloco.** _(🟠 médio · conf. high)_
+  - Existem tex-linebreak (robertknight), tex-linebreak2 (egilll) e typeset (bramstein) implementando Knuth-Plass com modelo box/glue/penalty; hifenização via 'hypher' (padrões de Liang). Justificação CSS pura usa 'first fit' e produz espaçamento ruim, então essas libs são o caminho. Risco: integrá-las ao motor próprio de medição (precisa medir glifos via Canvas measureText ou métricas de fonte) e ao text-wrap por contorno é trabalho de integração não trivial, mas é construção sobre base existente.
+- **Manipulação de objetos no canvas e editor de rich text têm reuso pesado e maduro — não são o gargalo.** _(🟠 médio · conf. high)_
+  - Para canvas/objetos: Konva.js (MIT, mesmo autor do Polotno) cobre drag/resize/rotate/transform handles/layers/undo-redo; Polotno SDK e IMG.LY CE.SDK provam que a camada de objetos é resolvível (mas são caros: Polotno self-serve a partir de US$899, CE.SDK enterprise/quote). Para rich text: ProseMirror/Tiptap, Lexical (Meta) e Slate são frameworks maduros. PORÉM, esses editores gerenciam o modelo de documento DOM-based — não fazem layout multi-frame/multi-página com fixed render, então a saída deles precisa ser realimentada no motor de paginação próprio.
+- **Construir um editor de design no canvas tem 'complexidade multiplicativa', não aditiva — o que penaliza fortemente 1 desenvolvedor.** _(🔴 alto · conf. medium)_
+  - Engenharia da Figma descreve que cada novo bloco precisa interagir com todos os outros no mesmo canvas (complexidade multiplicativa, inerente ao domínio); os núcleos de editor da Figma são C++ com renderer custom WebGL/WebGPU. Isso indica que escopo amplo (master pages + estilos + fluxo + wrap + objetos + export X) escala muito mal para um único dev, mesmo assistido por IA. Não há número público de man-years, mas o domínio é reconhecidamente de alta complexidade acumulada.
+- **Render fixo (fidelidade pixel/ponto WYSIWYG->PDF) é risco transversal subestimado: o que aparece na tela tem que casar com o PDF impresso.** _(🔴 alto · conf. high)_
+  - Como o motor de texto/wrap será próprio e o PDF final passará por Ghostscript/CMYK, há duas engines de layout potencialmente divergentes (preview no browser vs. geração do PDF). Garantir que quebras de linha, kerning, posições de imagem e wrap sejam idênticos exige que a MESMA engine de layout produza tanto o preview quanto as coordenadas do PDF (drawText/drawImage do pdf-lib com posições calculadas pelo motor próprio), em vez de depender do layout do browser. Isso é arquitetural e precisa ser decidido no spike, não depois.
+- **Master pages, estilos de parágrafo/caractere, spot colors e preflight completo são escopo de produto, não de MVP — devem ser cortados.** _(🟠 médio · conf. medium)_
+  - PDF/X-1a permite spot colors nomeados, mas spot/ICC arbitrário e preflight de gráfica são onde mora a cauda longa de bugs. cmyk-preview-toolkit (TS, zero deps) resolve preview/snap de paleta por Delta-E mas 'won't handle arbitrary ICC profiles or spot colors'. Para o MVP, fixar 1 perfil (FOGRA39), CMYK direto + grayscale, sem spot, sem preflight automático interno (validar manualmente no início) reduz drasticamente a superfície de risco mantendo saída imprimível.
+- **Persistência/sync é o subsistema de menor risco e pode ser deixado simples no MVP.** _(🟡 baixo · conf. high)_
+  - Um modelo de documento serializável em JSON (estilo cena do CE.SDK / esquema do Polotno) com salvamento em backend padrão e, se necessário depois, CRDT (Yjs) para colaboração, é território conhecido e de baixo risco. Não deve consumir orçamento de de-risking nem do MVP — colaboração em tempo real deve ser explicitamente fora de escopo inicial.
+
+### Bibliotecas / ferramentas
+- **Konva.js** — Camada de objetos no canvas: drag/resize/rotate, transform handles, layers, hit-testing, undo/redo — base para manipulação de frames e imagens _(maturidade: production; MIT)_ — https://konvajs.org/
+- **Fabric.js** — Alternativa a Konva para objetos em canvas com modelo de serialização embutido _(maturidade: production; MIT)_ — http://fabricjs.com/
+- **ProseMirror / Tiptap** — Modelo de documento de rich text e edição (estilos inline, undo, schema) — a saída alimenta o motor de paginação próprio _(maturidade: production; MIT)_ — https://prosemirror.net/
+- **Lexical** — Framework de editor de rich text da Meta, orientado a plugins e performance; alternativa ao ProseMirror _(maturidade: production; MIT)_ — https://lexical.dev/
+- **tex-linebreak (robertknight)** — Quebra de linha Knuth-Plass em JS (box/glue/penalty) para justificação tipográfica de qualidade dentro do motor próprio _(maturidade: mature; MIT)_ — https://github.com/robertknight/tex-linebreak
+- **typeset (bramstein)** — Implementação JS clássica do algoritmo Knuth-Plass para texto justificado no navegador _(maturidade: mature; MIT (BSD-like))_ — https://github.com/bramstein/typeset
+- **hypher** — Hifenização via padrões de Liang; insere hifens suaves nos pontos legais de quebra para o algoritmo de linebreak _(maturidade: mature; BSD)_ — https://github.com/bramstein/hypher
+- **MarchingSquares.js** — Extração de contorno/iso-linhas para gerar polígono do silhueta (alpha) da imagem, alimentando o text-wrap automático _(maturidade: mature; GPL/permissive (verificar))_ — https://github.com/RaumZeit/MarchingSquares.js/
+- **d3-contour** — Cálculo de contornos por marching squares; alternativa robusta para tracejar silhueta de imagem para wrap _(maturidade: production; ISC)_ — https://d3js.org/d3-contour
+- **pdf-lib** — Geração de PDF no cliente/servidor com DeviceCMYK e fontes embutidas — mas SEM perfis ICC/OutputIntent (insuficiente sozinho para PDF/X) _(maturidade: production; MIT)_ — https://github.com/Hopding/pdf-lib
+- **Ghostscript** — Passo SERVER-SIDE obrigatório: converter PDF base em PDF/X-1a/X-3 com OutputIntent ICC, flatten de transparência e CMYK correto _(maturidade: production; AGPL / comercial)_ — https://www.ghostscript.com/
+- **cmyk-preview-toolkit** — Preview CMYK no navegador e snap de paleta por Delta-E (representação dupla: cor-fonte CMYK + preview sRGB); não cobre ICC/spot arbitrários _(maturidade: experimental; MIT)_ — https://www.npmjs.com/package/cmyk-preview-toolkit
+- **Scribus** — Referência open-source de motor de export PDF/X + CMYK + separações + ICC; benchmark de o que 'print-perfect' realmente exige _(maturidade: production; GPL)_ — https://www.scribus.net/
+- **veraPDF** — Validação automatizada de PDF — útil para PDF/A e PDF/UA; NÃO valida PDF/X (lacuna de QA a cobrir com Acrobat Preflight ou regras próprias) _(maturidade: production; GPL/MPL)_ — https://verapdf.org/
+- **Polotno SDK** — Editor de design comercial em Konva — opção 'comprar em vez de construir' a camada de objetos/export (a partir de US$899 self-serve) _(maturidade: production; Comercial (proprietário))_ — https://polotno.com/
+- **IMG.LY CreativeEditor SDK (CE.SDK)** — SDK comercial que já entrega export PDF/X-3 CMYK/Pantone direto do browser e edição multi-camada — opção de compra ou benchmark de viabilidade _(maturidade: production; Comercial (enterprise/quote))_ — https://img.ly/products/creative-sdk
+- **Yjs** — CRDT para colaboração/sync em tempo real, se/quando persistência evoluir além de salvar JSON — fora do MVP _(maturidade: production; MIT)_ — https://yjs.dev/
+
+### Perguntas em aberto
+- Qual a tolerância real de cor exigida pelas gráficas-alvo? Se aceitarem PDF entregue com CMYK 'device' simples + 1 perfil fixo (FOGRA39) e fizerem a conversão no RIP delas, o risco-blocker de CMYK cai muito; se exigirem PDF/X-1a estrito validado, o pipeline Ghostscript+preflight é obrigatório.
+- O preview no navegador e o PDF final usarão a MESMA engine de layout (motor próprio gera coordenadas para pdf-lib) ou duas engines distintas? A decisão define se haverá divergência WYSIWYG->impressão (risco de render fixo).
+- O text-wrap precisa ser automático por contorno alpha (marching squares) já no MVP, ou um wrap por polígono/retângulo editado à mão é aceitável como v1 mantendo o diferencial?
+- Volume de texto por documento: dezenas de páginas com repaginação ao vivo muda o orçamento de performance do motor de fluxo (precisa de layout incremental/virtualização, não recálculo total).
+- Comprar (Polotno/CE.SDK) a camada de objetos+export e construir só o diferencial (fluxo+wrap) é aceitável comercialmente/licença, ou tudo deve ser proprietário do zero? Isso muda o cronograma de meses para multiplicador.
+- Fontes: licenciamento para embutir em PDF e disponibilidade de métricas precisas (kerning) — usar measureText do Canvas é suficiente ou será necessário parser de fonte (opentype.js)?
+
+<details><summary>Fontes (28)</summary>
+
+- https://dev.to/vjmanoj/the-cmyk-problem-nobody-warns-you-about-when-building-a-pdf-editor-in-the-browser-3a02
+- https://github.com/adobe-webplatform/css-regions-polyfill/blob/master/SUPPORT.md
+- https://adobe-webplatform.github.io/css-regions-polyfill/
+- https://www.i-programmer.info/news/191-htmlcss/6889-google-removes-css-regions-from-blink-an-optimization-too-far.html
+- https://web.dev/articles/css-regions-exclusions
+- https://developer.mozilla.org/en-US/docs/Web/CSS/shape-outside
+- https://css-tricks.com/getting-creative-with-shape-outside/
+- https://github.com/robertknight/tex-linebreak
+- https://github.com/bramstein/typeset/
+- https://en.wikipedia.org/wiki/Knuth%E2%80%93Plass_line-breaking_algorithm
+- https://github.com/Hopding/pdf-lib/discussions/1717
+- https://github.com/Hopding/pdf-lib/blob/master/src/api/colors.ts
+- https://img.ly/blog/what-does-print-ready-pdf-mean-understanding-pdf-x-standards-for-professional-printing/
+- https://pdfa.org/technical-side-and-requirements-of-pdfx/
+- https://www.prepressure.com/pdf/basics/pdfx-1a
+- https://www.npmjs.com/package/@polotno/pdf-export
+- https://polotno.com/sdk/product/compare/polotno-sdk-vs-konvajs
+- https://img.ly/products/creative-sdk
+- https://www.scribus.net/
+- https://wiki.scribus.net/canvas/Help:Manual_Cmspdfx3
+- https://docs.verapdf.org/cli/validation/
+- https://www.codegenes.net/blog/how-to-use-ghostscript-to-convert-pdf-to-pdf-a-or-pdf-x/
+- https://github.com/RaumZeit/MarchingSquares.js/
+- https://d3js.org/d3-contour
+- https://digitalfreepen.com/2018/09/29/figma-design-tools.html
+- https://andrewkchan.dev/posts/figma2.html
+- https://konvajs.org/
+- https://liveblocks.io/blog/which-rich-text-editor-framework-should-you-choose-in-2025
+
+</details>
+
+---
+## Regras, calculos e formatos de arquivo para impressao profissional de livro (POD KDP/IngramSpark + offset BR)
+
+**Resumo:** As regras dividem-se em ABSOLUTAS (qualquer grafica) e VARIAVEIS (por fornecedor). Absolutas: arquivo PDF/X com fontes 100% embutidas/subset; sangria de 0,125 pol (3mm) em POD e 3-5mm no offset BR; miolo offset SEMPRE multiplo de paginas (4 minimo, ideal cadernos de 8/16/32) e arquivo final com contagem PAR. Lombada = (n.o de paginas x espessura por pagina do papel) + folga de capa, com constantes: KDP white = 0,002252 pol/pag, cream = 0,0025 pol/pag, color/hardcover = 0,002347 pol/pag; formula offset BR = paginas x gramatura x 2 / 28800 (cm). Cor deve ser CMYK; o TAC (cobertura total de tinta) e o parametro critico: IngramSpark limita a 240%, GRACoL/coated 320-340% (mas menos de 300% recomendado), SWOP/FOGRA39 = 300%, uncoated 240-260%. Rich black recomendado 60C/40M/40Y/100K (=240%); registration black 100/100/100/100 (=400%) e PROIBIDO. KDP e IngramSpark inserem o codigo de barras EAN-13 do ISBN automaticamente; reservar area limpa de pelo menos 0,25 pol no canto inferior direito do verso. Risco principal: ICC/spot color embutido no miolo (IngramSpark rejeita) e estouro do TAC causam rejeicao ou impressao borrada.
+
+### Achados
+- **Formato de arquivo aceito por POD profissional e PDF/X-1a:2001 ou PDF/X-3:2002, NAO PDF/X-4** _(🔴 alto · conf. high)_
+  - IngramSpark (File Creation Guide oficial) exige Files must be PDF/X-1a:2001 or PDF/X-3:2002 compliant. KDP tambem recomenda PDF/X. PDF/X-1a:2001 = CMYK + spot apenas, SEM ICC, SEM transparencia viva (flatten obrigatorio), mais previsivel para POD/offset. PDF/X-3:2002 = permite RGB/Lab/ICC com conversao no RIP. PDF/X-4 = mantem transparencia viva/camadas/ICC sem flatten, mas POD principais NAO endossam, evitar no miolo. IngramSpark manda NAO incluir spot colors nem ICC profiles embutidos (converte preto 100%K para cinza).
+- **Lombada = (paginas x espessura por pagina do papel) + folga de capa, constantes exatas por fornecedor** _(🟠 médio · conf. high)_
+  - KDP espessura/pagina: white = 0,002252 pol; cream = 0,0025 pol; color e hardcover case laminate = 0,002347 pol. Folga paperback = 0,06 pol; binding allowance hardcover = 0,125 pol. Ex.: 6x9, 100 pag white = (100x0,002252)+0,06 = aprox 0,285 pol. OFFSET BRASIL: lombada(cm) = (paginas x gramatura x 2)/28800. Ex.: 100 pag offset 75g = (100x75x2)/28800 = 0,52cm. Polen Soft 80g aprox 0,10mm por folha (0,10mm, nao 1mm). Micragem do papel tem tolerancia, confirmar com a grafica.
+- **Texto na lombada e PROIBIDO abaixo de numero minimo de paginas** _(🟡 baixo · conf. high)_
+  - KDP: sem texto/grafismo na lombada de livros com menos de 100 paginas (paperback); hardcover exige 79 paginas ou mais para texto na lombada. IngramSpark: lombada abaixo de 0,35 pol (9mm) reduz a margem de seguranca da lombada para aprox 0,0325 pol (1mm). Lombadas muito finas nao comportam texto por causa da tolerancia de dobra/corte.
+- **Margem interna (gutter/medianiz) e FUNCAO da contagem de paginas, tabela KDP exata** _(🟠 médio · conf. high)_
+  - KDP margem interna minima: 24-150 pag = 0,375 pol (9,6mm); 151-300 = 0,5 pol (12,7mm); 301-500 = 0,625 pol (15,9mm); 501-700 = 0,75 pol (19,1mm); 701-828 = 0,875 pol (22,3mm). Margem externa minima KDP: sem sangria = 0,25 pol (6,4mm); com sangria = 0,375 pol (9,6mm). IngramSpark recomenda margem minima de 0,5 pol (13mm) em todos os lados. Mais paginas = maior gutter porque a curvatura da lombada engole o texto interno.
+- **Sangria: 0,125 pol (3mm) em POD; NUNCA aplicar sangria na lombada/bind side** _(🟠 médio · conf. high)_
+  - KDP e IngramSpark: 0,125 pol (3,2mm) em todas as bordas da capa (capa SEMPRE com sangria). IngramSpark interior: 0,125 pol (3mm) nos TRES lados de corte (topo, base, externo), NUNCA no lado da lombada/gutter. Hardcover/case laminate IngramSpark exige wrap muito maior (aprox 0,625 pol de envolvimento). Offset BR: sangria minima 3mm, padrao de mercado 5mm (0,5cm). Capa dura precisa de wrap/envelope (aprox 0,625 a 1,25 pol) ALEM da sangria de 0,125 pol.
+- **TAC (cobertura total de tinta) e o limite critico de cor e varia por papel/perfil** _(🔴 alto · conf. high)_
+  - IngramSpark: TAC maximo = 240% (estoura = excesso de tinta, perda de detalhe, secagem ruim). GRACoL (coated sheetfed) = 320-340% nominal, mas menos de 300% recomendado. SWOP (web offset) = 300%. FOGRA39 (coated EU) = 300%. Uncoated/non-heatset/jornal = 240-260%. Perfis ICC: US Web Coated SWOP v2 (KDP recomenda), GRACoL2006/2013 (coated US), FOGRA39 (coated EU), FOGRA47/uncoated. Perfis modernos embutem GCR para controlar geracao de preto e TAC.
+- **Cor DEVE ser CMYK; rich black recomendado e registration black proibido em design** _(🔴 alto · conf. high)_
+  - Imagens do miolo color devem ser CMYK (IngramSpark rejeita abaixo de 72ppi e exige CMYK). Rich black recomendado = 60C/40M/40Y/100K (= 240% TAC). Texto preto e line art/fontes pequenas devem usar SOMENTE preto (0/0/0/100K) para evitar ghosting por desregistro. Registration black = 100/100/100/100 (= 400%) e so para marcas de registro de prensa; como cor de design causa bleeding, falha de secagem e dano a prensa. PROIBIDO.
+- **Resolucao: 300ppi tom continuo, 600-1200ppi line art (1-bit)** _(🟠 médio · conf. high)_
+  - IngramSpark oficial: 600 ppi line art P&B 1-bit; 300 ppi grayscale 8-bit tom continuo; capa 350 dpi (min. 1873px no lado maior, 1600px no menor); cor do miolo 300 ppi CMYK; imagens abaixo de 72ppi rejeitadas. KDP: 300 DPI minimo. Padrao offset: 300dpi imagens, 1200dpi line art. Fontes: 100% embutidas ou embedded subset; fonte nao embutida e rejeitada (o setting Standard do Acrobat nao embute base-14 fonts e causa rejeicao).
+- **Miolo offset deve ser multiplo de paginas (cadernos); POD exige contagem PAR e pagina final em branco** _(🟠 médio · conf. high)_
+  - Offset: paginas sempre multiplo de 4 minimo; cadernos (signatures) tipicos de 8, 16 e 32. Planejar A5 em multiplos de 32, A4 em multiplos de 16 para evitar caderno parcial. IngramSpark (Lightning Source) oficial: miolo armazenado com contagem DIVISIVEL POR DOIS (par); a ULTIMA PAGINA fica em branco para as informacoes de fabricacao da LS; se necessario a LS adiciona paginas automaticamente. KDP paperback: 24-828 paginas; hardcover case-laminate: 75-550 paginas.
+- **ISBN/codigo de barras EAN-13 e gerado automaticamente pelo POD; reservar area limpa** _(🟡 baixo · conf. high)_
+  - KDP e IngramSpark inserem automaticamente o EAN-13 (codifica o ISBN) no verso ao processar o upload; KDP pode sobrescrever um codigo colocado pelo autor. Posicao: quadrante inferior direito do verso, pelo menos 0,25 pol das bordas, livre de arte/texto/fundo escuro. Tamanho EAN-13: KDP aceita min. 1,75x1,0 pol; recomendado 2,0x1,25 pol (sem preco) ou 2,44x1,25 pol (com add-on EAN-5 de preco). Em offset BR o ISBN/codigo de barras e responsabilidade do editor e entra na arte.
+- **Overprint e flattening de transparencia exigem atencao conforme o padrao PDF/X** _(🟠 médio · conf. medium)_
+  - PDF/X-1a achata toda transparencia na exportacao; overprint deve ser revisado: overprint indevido em branco some na impressao; overprint de preto sobre cor evita knockout/buracos brancos no texto preto. PDF/X-4 preserva transparencia viva, mas POD pede X-1a/X-3 (flatten praticamente obrigatorio); checar overprint preview antes de exportar. Fechamento BR: converter ao perfil, embutir/curvar fontes, ajustar resolucao, sangria + marcas de corte, revisar overprint/knockout/camadas.
+- **Trim sizes comuns: lista exata KDP (US) e formatos BR** _(🟡 baixo · conf. high)_
+  - KDP paperback (pol/mm): 5x8 (12,7x20,32), 5,06x7,81, 5,25x8, 5,5x8,5 (13,97x21,59), 6x9 (15,24x22,86 mais comum), 6,14x9,21, 6,69x9,61, 7x10, 7,44x9,69, 7,5x9,25, 8x10, 8,25x8,25, 8,5x8,5, 8,5x11 (21,59x27,94), 8,27x11,69 (A4=21x29,7cm). BR (mercado): 14x21cm (romance padrao), 16x23cm, 15,5x22,5cm, A5 (14,8x21cm), alem de formatos sob demanda. Capa dura adiciona wrap alem do trim.
+- **POD vs offset BR: POD = arquivo unico e regras rigidas automatizadas; offset = caderno/imposicao e perfil sob consulta** _(🟠 médio · conf. high)_
+  - POD (KDP/IngramSpark): PDF unico (interior + capa separados), revisao automatizada rigida, TAC baixo (IngramSpark 240%), perfil padrao (SWOP v2), codigo de barras automatico, sem caderno. Offset BR: imposicao em cadernos (8/16/32), perfil ICC depende do papel/maquina (coated FOGRA39/GRACoL vs uncoated), TAC mais alto possivel em coated, sangria comum 5mm, fechamento manual, prova de cor fisica. ABSOLUTO: CMYK, fontes embutidas, multiplo de pagina. VARIAVEL: TAC exato, perfil ICC, sangria (3 vs 5mm), trim size, folga de lombada.
+
+### Bibliotecas / ferramentas
+- **KDP (Kindle Direct Publishing) print specs/calculator** — POD da Amazon: trim sizes, formula de lombada (0,002252/0,0025/0,002347 por pag), tabela de gutter por contagem, sangria 0,125 pol, codigo de barras automatico _(maturidade: production; Plataforma proprietaria (uso gratuito))_ — https://kdp.amazon.com/en_US/help/topic/GVBQ3CMEQW3W2VL6
+- **IngramSpark File Creation Guide (Lightning Source)** — Spec oficial POD global: PDF/X-1a:2001/X-3:2002, TAC 240%, rich black 60/40/40/100, 600ppi line art / 300ppi tom continuo, pagina par + ultima em branco, fontes embutidas, NAO incluir ICC/spot no miolo _(maturidade: production; Documento proprietario (download gratuito))_ — https://www.ingramspark.com/hubfs/downloads/file-creation-guide.pdf
+- **Perfil ICC US Web Coated (SWOP) v2** — Perfil CMYK padrao recomendado por KDP para conversao de cor (TAC aprox 300%), web offset publicacoes _(maturidade: mature; Adobe/IDEAlliance (uso livre via apps Adobe))_ — https://www.color.org/
+- **Perfil ICC FOGRA39 (ISO Coated v2)** — Padrao europeu para papel coated em offset (TAC 300%), referencia para graficas BR de qualidade _(maturidade: mature; ECI (download gratuito))_ — https://www.eci.org/en/downloads
+- **Perfis GRACoL 2006/2013 (CGATS21)** — Padrao norte-americano sheetfed offset coated premium (TAC 320-340% nominal, menos de 300% pratica) _(maturidade: mature; IDEAlliance)_ — https://www.idealliance.org/
+- **Adobe Acrobat Pro (preflight/fontes/overprint preview)** — Confirmar fontes (Embedded/Embedded Subset), preflight PDF/X, overprint preview, conversao de cor _(maturidade: production; Proprietario (assinatura))_ — https://www.adobe.com/acrobat.html
+- **Calculadoras de lombada BR (Ubaldo, PoloPrinter, BH Grafica, Tuicial)** — Aplicam formula offset BR (paginas x gramatura x 2 / 28800 = cm) por tipo de papel (offset/polen/couche) _(maturidade: production; Ferramenta web gratuita das graficas)_ — https://www.bhgrafica.com.br/calculadoras/calculadora-de-lombada-de-livros-e-revistas/
+
+### Perguntas em aberto
+- A constante de lombada hardcover do KDP aparece como 0,002347 pol/pag em fontes 2026, mas fontes antigas citam 0,002252; confirmar no template generator oficial do KDP para o papel especifico (white/cream/color)
+- TAC exato e perfil ICC do offset brasileiro variam por grafica e papel (coated vs uncoated); obrigatorio obter do fornecedor BR o perfil ICC e o limite de TAC antes de fechar o arquivo (genericamente coated 300-340%, polen/offset uncoated 240-280%)
+- Espessura por pagina (micragem) do papel BR (Polen 80g aprox 0,10mm) tem tolerancia de fabricacao que altera a lombada; pedir a micragem real do lote a grafica em lombadas grossas onde 1-2mm importa
+- Confirmar se a grafica offset BR exige marcas de corte + color bars + crop marks no PDF ou prefere PDF limpo so com sangria (varia: muitas pedem PDF fechado com marcas; POD pede SEM marcas)
+- Verificar regra atual da IngramSpark para wrap/hinge exato de capa dura (case laminate) no template generator, pois o wrap (aprox 0,625 pol) e a margem extra de lombada sao gerados dinamicamente por trim+paginas
+
+<details><summary>Fontes (17)</summary>
+
+- https://kdp.amazon.com/en_US/help/topic/GVBQ3CMEQW3W2VL6
+- https://www.ingramspark.com/hubfs/downloads/file-creation-guide.pdf
+- https://myaccount.ingramspark.com/documents/IngramSpark%20File%20Creation%20Guide.pdf
+- https://www.kdpeasy.com/guides/kdp-cover-requirements
+- https://www.kdpeasy.com/blog/spine-width-calculator-guide
+- https://bookcoverslab.com/kdp-cover-size-calculator/quick-reference
+- https://pdfa.org/technical-side-and-requirements-of-pdfx/
+- https://blog.hybridhelix.com/pdf-x-1a-vs-pdf-x-4-whats-the-difference-and-which-should-you-use-in-2025/
+- https://www.colourphil.co.uk/gcr-ucr-total-ink.shtml
+- https://aldertech.com/what-is-the-right-total-ink-limit-setting/
+- https://www.qpmarketnetwork.com/printing/rich-black-cmyk-guide/
+- https://en.wikipedia.org/wiki/Rich_black
+- https://www.qinprinting.com/print-signatures/
+- https://en.wikipedia.org/wiki/Intentionally_blank_page
+- https://kdp.amazon.com/en_US/help/topic/G5HDYGP4BXLX4RUW
+- https://www.bhgrafica.com.br/calculadoras/calculadora-de-lombada-de-livros-e-revistas/
+- https://www.grupocorgraf.com.br/arte-final-e-fechamento-de-arquivo-para-grafica-offset-sem-erros-comeca-antes-da-exportacao-do-pdf/
+
+</details>
+
+---
+## Verificações adversariais
+
+- **⚠️ parcial** — O pipeline do navegador (Canvas/CSS/compositing) é inteiramente sRGB/RGB; não há gestão de cor CMYK. Canvas 2D opera em RGBA 8-bit sem ICC de saída, EyeDropper só devolve RGB, e não há como o navegador emitir tinta CMYK controlada.
+  - Versão corrigida: O pipeline de EXIBIÇÃO/compositing do navegador é de fato inteiramente RGB: Canvas 2D só suporta 'srgb' e 'display-p3' (sem CMYK, confirmado no explainer WICG), getImageData devolve RGBA 8-bit assumido sRGB sem ICC de saída, a EyeDropper API só retorna sRGBHex, e tanto device-cmyk() quanto @color-profile (ICC) da CSS Color 5 NÃO são suportados por nenhum navegador. Não há, portanto, gestão de cor CMYK nem soft-proofing/preview CMYK fiel na tela — isso é um blocker real para qualquer requisito de exibição/edição de cor em CMYK dentro do navegador. PORÉM, a afirmação de que 'não há como o navegador emitir tinta CMYK controlada' é imprecisa: bibliotecas JS no próprio navegador (ex.: pdf-lib, com tipo nativo ColorTypes.CMYK -> DeviceCMYK) conseguem ESCREVER valores CMYK controlados no PDF de saída, e a abordagem recomendada pela própria fonte (dev.to) é a 'dual representation' — manter o CMYK de origem + preview sRGB e gravar os valores CMYK exatos na exportação. Para fidelidade colorimétrica completa, a conversão com ICC continua sendo feita fora do pipeline de tela (Ghostscript/LittleCMS server-side). Conclusão: blocker para CMYK on-screen/color-managed, mas contornável (risco medium) para produção de saída CMYK via PDF.
+  - Raciocínio: Tentei refutar a afirmação com 7 buscas independentes e 3 WebFetch a fontes primárias (MDN, WICG, pdf-lib, dev.to). O NÚCLEO da afirmação se sustenta fortemente para o pipeline de RENDERIZAÇÃO/EXIBIÇÃO/COMPOSITING on-screen, mas a frase final 'não há como o navegador emitir tinta CMYK controlada' está EXAGERADA/IMPRECISA e merece correção, daí o veredito 'parcial'.
+
+CONFIRMADO (alta confiança):
+1) Pipeline de exibição é RGB. Canvas 2D suporta apenas dois espaços: 'srgb' (default) e 'display-p3'. O explainer do WICG define literalmente 'enum PredefinedColorSpace { \"srgb\", \"display-p3\" }' e NÃO menciona CMYK em nenhum lugar. getImageData só suporta 'rgba-unorm8' em srgb/display-p3; conteúdo sem espaço definido é interpretado como sRGB. ICC arbitrário foi explicitamente recusado por 'complexidade significativa de implementação'.
+2) EyeDropper API retorna apenas sRGBHex (#RRGGBB), gamut-mapeado para sRGB; nunca CMYK. Confirmado pela spec WICG e MDN/Chrome docs.
+3) device-cmyk() CSS: 'Currently, no browsers support this feature' (MDN, verbatim). @color-profile (que permitiria carregar ICC CMYK e usar color(--perfil ...)): também 'no browsers support this feature' em NENHUM navegador. Ou seja, mesmo a especificação CSS Color 5 que previa CMYK com ICC está 100% não-implementada.
+4) A fonte dev.to original foi localizada e verificada: confirma 'browsers only understand sRGB. They have no concept of CMYK color at all' e que pdf.js converte CMYK->RGB de forma lossy ao renderizar. Citação autêntica.
+
+NUANCE QUE FORÇA 'PARCIAL' (corrige o exagero):
+- A afirmação de que 'não há como o navegador emitir tinta CMYK controlada' é falsa quando se trata de GERAR ARTEFATOS (PDF), não de exibir. A biblioteca pdf-lib (JS, roda no browser) tem um tipo CMYK nativo (interface CMYK { type: ColorTypes.CMYK; cyan; magenta; yellow; key }) que escreve valores DeviceCMYK diretamente no PDF exportado. Logo, o navegador PODE emitir valores CMYK controlados para o arquivo de saída — apenas não consegue EXIBIR/gerir CMYK na tela nem fazer color-management ICC.
+- A própria fonte dev.to citada propõe e RECOMENDA o contorno: 'dual representation' (manter o CMYK de origem + preview sRGB) e, na exportação, 'if it's CMYK, you write those exact values into the PDF' — alegando '95% do benefício com 5% da complexidade'. Ou seja, a fonte usada como base do 'blocker' na verdade documenta um contorno conhecido e prático.
+- Caminho complementar fora do navegador: conversão server-side RGB->CMYK com ICC via Ghostscript (-sColorConversionStrategy=CMYK -sProcessColorModel=DeviceCMYK + perfil ICC) ou LittleCMS (colorvert/transicc) para fidelidade real.
+
+Portanto: como BLOCKER para CMYK fiel ON-SCREEN (preview WYSIWYG, color-management, conta-gotas CMYK, gamut soft-proof), a afirmação está correta e é de fato um blocker. Mas para um pipeline de 'imagens, contorno e efeitos' cujo objetivo é PRODUZIR saída print-ready, NÃO é um blocker absoluto: dá para preservar/emitir CMYK no PDF de saída (pdf-lib, dual representation) e/ou converter com ICC server-side. O risco realista é 'medium' (degrada o preview e exige arquitetura de dupla representação), não 'blocker' total como declarado.
+- **⚠️ parcial** — device-cmyk() e @color-profile NÃO são suportados por nenhum navegador (2026) e são features 'at-risk' na spec CSS Color 5. Consequência declarada: definir cor CMYK exata para gráfica via navegador é impossível hoje. Risco: blocker / Confiança: high.
+  - Versão corrigida: CONFIRMADO no detalhe CSS: device-cmyk() e @color-profile não têm suporte em nenhum navegador (MDN, jun/2026: "Currently, no browsers support this feature." para ambos) e são explicitamente listados como at-risk na CSS Color Module Level 5 (W3C WD de 18/06/2026), junto de Custom Color Spaces e Relative Alpha Colors, podendo ser removidos no CR. A própria MDN alerta que, mesmo se processado, o resultado provavelmente diferiria do impresso sem a colorimetria de saída. NUANCE QUE CORRIGE A CONCLUSÃO: definir/calcular/exportar cor CMYK exata para gráfica via navegador NÃO é impossível hoje - é apenas impossível pela via CSS nativa. O contorno maduro e em produção é fazer a gestão de cor em JavaScript/WASM com Little CMS (lcms-wasm, npm, MIT; Little-CMS também MIT), que executa transformações ICC reais sRGB<->CMYK 100% client-side, inclusive permitindo upload do perfil ICC da própria gráfica para soft-proof (ex.: conversor da Polotno com SWOP v2 e FOGRA39). O valor CMYK exato pode ser preservado e gravado no export/PDF. A limitação remanescente é só de EXIBIÇÃO on-screen perfeita (canvas/DOM em sRGB, estendível a Display-P3; cores fora de gamut são clampadas), que é um problema de colorimetria do display comum a qualquer ferramenta. Conclusão: blocker apenas para a abordagem CSS device-cmyk()/@color-profile; com lcms-wasm + ICC, CMYK exato para gráfica no navegador é viável (risco baixo, custo = dependência WASM e necessidade de fornecer perfis ICC).
+  - Raciocínio: A parte factual do CSS está CONFIRMADA e até reforçada por fontes atuais: (1) A MDN afirma textualmente "Currently, no browsers support this feature." tanto para device-cmyk() quanto para @color-profile (verificado nas duas páginas em jun/2026, Chrome/Safari/Firefox incluídos). (2) A CSS Color Module Level 5 (W3C Working Draft datado de 18 June 2026 - um dia atrás) lista verbatim como at-risk: "Custom Color Spaces, @color-profile, device-cmyk(), Relative Alpha Colors", podendo ser removidas no período CR. (3) A própria MDN avisa que mesmo onde processado "the end result is likely to be different from the printed result without knowing the precise output colorimetry". Logo, a via CSS-nativa para CMYK está morta hoje e é instável na spec - o detalhe técnico da afirmação está correto.\n\nPORÉM a CONCLUSÃO ("definir cor CMYK exata para gráfica via navegador é impossível hoje") é EXAGERADA e precisa de correção, por isso o veredito é parcial e não confirmado. Há um contorno conhecido, maduro e em produção que a afirmação ignora ao colapsar 'CSS nativa' com 'no navegador': processar CMYK via JavaScript/WASM com Little CMS (motor MIT, o mesmo do Firefox/GIMP/pipelines de impressão Linux). A biblioteca lcms-wasm (npm, licença MIT, baseada em mm2/Little-CMS também MIT) faz conversões bidirecionais sRGB<->CMYK<->Lab baseadas em perfis ICC reais, 100% client-side, em web/Node/web workers. Exemplo real em produção: o conversor RGB->CMYK da Polotno empacota perfis ICC (U.S. Web Coated SWOP v2, Coated FOGRA39/ISO 12647-2) E permite o usuário fazer upload do .icc da própria gráfica para soft-proof, com o arquivo parseado inteiramente no browser. Ou seja: armazenar, calcular e exportar valores CMYK exatos (inclusive contra o perfil ICC da gráfica) É viável no navegador HOJE via WASM - o que NÃO é viável é (a) declarar a cor em CSS nativo e (b) garantir EXIBIÇÃO on-screen perfeita, pois o canvas/DOM opera em sRGB (estendível a Display-P3 no WebKit, mas ainda fora do gamut CMYK) e cores fora do gamut são clampadas; a exatidão on-screen depende de colorimetria do monitor, problema que existe igual em apps desktop. Para fluxo de gráfica o que importa é o VALOR CMYK exato gravado no arquivo de saída (PDF/export), e isso é alcançável. Portanto: o blocker é real e correto para a abordagem CSS-nativa de cor CMYK, mas NÃO é um blocker para "manipular/definir CMYK exato para gráfica no navegador" de forma geral - existe caminho viável via lcms-wasm + perfis ICC. Risco recalibrado: blocker apenas se a arquitetura insistir em CSS device-cmyk()/@color-profile; caso contrário é um problema resolvido (low risk) com a dependência WASM.
+- **⚠️ parcial** — Imagens CMYK carregadas no navegador são convertidas para RGB de forma lossy e NÃO-reversível; um round-trip CMYK→RGB(tela)→CMYK(export) perde a cor original. Risco declarado: blocker / confiança high. Workaround citado: "dual representation".
+  - Versão corrigida: Navegadores são nativamente RGB/sRGB: o canvas converte CMYK→RGB para exibir (conversão lossy) e getImageData() devolve apenas RGB; nenhum navegador implementa device-cmyk (CSS Color 5, "at-risk"). É verdade que RGB→CMYK não é o inverso de CMYK→RGB (mapeamento não-único, gamuts diferentes), então re-derivar CMYK a partir do RGB exibido perde fidelidade. PORÉM o CMYK original não é destruído — ele permanece no arquivo de origem. A solução padrão (não exótica) é a "dupla representação": guardar o CMYK de origem + um preview sRGB e, no export, gravar de volta o CMYK original sem reconversão — exatamente o que fazem soft-proofing (Photoshop/CorelDRAW/Krita), o UNCHANGED_COLOR_SPACE do Acrobat e pdf-lib/pikepdf/PyMuPDF. Logo trata-se de uma RESTRIÇÃO DE DESIGN GERENCIÁVEL (risco médio), não de um blocker. Limites reais que persistem: perfis ICC arbitrários, cores spot e quaisquer cores NOVAS criadas no editor ainda sofrem aproximação RGB→CMYK inevitável no navegador.
+  - Raciocínio: Os FATOS de ciência da cor na afirmação são corretos e confirmados por fontes independentes, MAS o enquadramento de risco ("blocker / high") é exagerado e a frase "perde a cor original" é imprecisa.
+
+CONFIRMADO independentemente (não apenas pelo artigo-fonte original do DEV.to, que é a origem da afirmação):
+1) Navegadores e o canvas 2D operam apenas em RGB/sRGB. getImageData() retorna o buffer do canvas já convertido para RGBA (0-255), não os canais CMYK originais — confirmado por MDN, Apple Developer e arquivos do W3C public-canvas-api.
+2) Nenhum navegador implementa device-cmyk() do CSS Color 5; a função é marcada como "at-risk" pelo W3C (Mozilla Bugzilla 484703, MDN, csswg-drafts #2022). Logo o navegador realmente "não tem conceito de CMYK" nativo.
+3) CMYK→RGB é lossy e RGB→CMYK NÃO é seu inverso: gamuts de tamanhos diferentes, múltiplos CMYK mapeiam para o mesmo RGB, e o inverso não é único (ciência de cor ICC, DeviceLink, FESPA/color.org). Mesmo com ICC + DeviceLink não há round-trip arbitrário garantidamente lossless.
+4) Portanto, um round-trip ingênuo CMYK→RGB(exibição)→CMYK(re-derivado da tela) realmente introduz drift. Isso é real.
+
+POR QUE É "PARCIAL" E NÃO "CONFIRMADO":
+- A frase "perde a cor original" é enganosa. O dado CMYK original NÃO é destruído pela exibição — continua intacto no arquivo/PDF de origem. A perda só ocorre se você DESCARTAR a fonte e recalcular o CMYK a partir do RGB exibido. É perda de fluxo de dados mal projetado, não perda física inevitável.
+- O "workaround" de dual representation NÃO é pipeline exótico/raro — é a prática-padrão da indústria: soft-proofing profissional (Photoshop, CorelDRAW, Krita) que "preserva os valores CMYK"; a opção UNCHANGED_COLOR_SPACE do Adobe Acrobat; e preservação de cor no export via pdf-lib/pikepdf/PyMuPDF (gravar os valores CMYK de origem de volta sem conversão). Solução conhecida, barata e bem documentada.
+- Consequência: o problema é uma RESTRIÇÃO DE DESIGN GERENCIÁVEL (manter source CMYK + preview sRGB e exportar a fonte sem reconverter), não um BLOCKER de projeto. A classificação "blocker / high" está superdimensionada — risco real é médio.
+
+RESSALVAS que sustentam parte da afirmação: o dual representation tem limites reais — não cobre bem perfis ICC arbitrários nem cores spot, e qualquer cor NOVA criada/editada pelo usuário no editor (sem origem CMYK) ainda terá de passar por RGB→CMYK aproximado. Para essas cores novas a perda/aproximação é real e inevitável no navegador.
+- **✅ confirmado** — CSS Regions, a unica primitiva nativa para texto transbordando de uma caixa para a proxima, esta morta e nao vai voltar (rejeitada pelo Blink em 2014, suporte so em navegadores legados, precisa-se de JS).
+  - Versão corrigida: CONFIRMADO com ajuste de precisao. CSS Regions esta morta para producao: uso global 0.46% (caniuse 2026), suporte so em legados (Safari <=11, iOS <=11.2, IE 10-11, Edge <=18, Chrome 15-18 atras de flag), 'no longer pursued by any browser'. Remocao do Blink (jan/2014) documentada por tamanho/complexidade ('over 10000 lines', codigo em 140+ arquivos) e por performance ('perform badly in Blink'); Opera objetou ('harmful to the web, mixes style and structure') e Mozilla nunca implementou. O CSSWG hoje afirma que Regions 'will definitely not be the solution for the problem space'. AJUSTE: tecnicamente Regions nao e mais 'a unica' primitiva na trilha de padroes - existe o sucessor 'continue: fragments' (CSS Overflow L4/L5), porem ele esta 'highly experimental, sem consenso, implementacao nao recomendada' e nao implementado em nenhum navegador. Conclusao pratica inalterada: nenhuma primitiva CSS nativa para fluxo de texto entre frames e usavel hoje; a solucao precisa ser em JS sobre primitivas existentes (Range/getClientRects, busca binaria de pontos de quebra, como nos polyfills FremyCompany e blasten). RISCO: high. CONFIANCA: high.
+  - Raciocínio: Pesquisa independente (caniuse, thread oficial blink-dev, i-programmer, drafts.csswg.org, CSSWG) confirma todos os pontos centrais; tentativa de refutacao falhou. caniuse (2026): uso global 0.46%, nota oficial 'implementing the feature is no longer being pursued by any browser', suporte apenas em Safari <=11, iOS Safari <=11.2, IE 10-11, Edge <=18, Chrome 15-18. Remocao do Blink (jan/2014) documentada: patch 10000+ linhas em 140+ arquivos (Eric Seidel) e justificativa 'they currently perform badly in Blink'. Objecoes confirmadas: Opera (Hakon Wium Lie: 'harmful to the web, mixes document style and structure') e Mozilla (nunca implementou, preferiu sua proposta Fragments). CSSWG hoje: Regions nao esta no Snapshot e 'will definitely not be the solution for the problem space'. Unica nuance: ha um sucessor na trilha de padroes (continue: fragments do CSS Overflow L4/L5), mas marcado como 'highly experimental, sem consenso, implementacao nao recomendada' e nao implementado em nenhum navegador (so continue: collapse/discard, que e line-clamp e nao fluxo entre caixas, tem prototipo parcial no Chromium). Logo a tese operacional (depender de JS sobre primitivas existentes) permanece valida; por isso 'confirmado' e nao 'parcial'.

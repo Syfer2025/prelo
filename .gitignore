@@ -1,0 +1,26 @@
+# macOS / local editor state
+.DS_Store
+.claude/
+
+# Dependencies
+node_modules/
+diagramador/node_modules/
+
+# Build outputs
+dist/
+diagramador/dist/
+
+# Temporary/generated artifacts
+tmp/
+diagramador/tmp/
+*.log
+
+# TypeScript incremental cache
+*.tsbuildinfo
+diagramador/node_modules/.tmp/
+
+# Environment/secrets
+.env
+.env.*
+!.env.example
+
