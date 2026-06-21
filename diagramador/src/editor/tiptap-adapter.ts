@@ -9,7 +9,7 @@
 type TiptapMark = { type: string };
 
 type TiptapTextNode = {
-  type: 'text';
+  type: string;
   text: string;
   marks?: TiptapMark[];
 };
@@ -20,8 +20,8 @@ type TiptapBlockNode = {
   content?: TiptapTextNode[];
 };
 
-type TiptapDoc = {
-  type: 'doc';
+export type TiptapDoc = {
+  type: string;
   content?: TiptapBlockNode[];
 };
 
