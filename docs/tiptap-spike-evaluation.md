@@ -1,17 +1,24 @@
 # Tiptap Spike Evaluation
 
 Branch: `spike/tiptap-editor` · Checkpoint do motor antes do spike: `a8db9a0`.
-Flag: `USE_TIPTAP_SPIKE` em `diagramador/src/product/EditorShell.tsx` (ligada nesta branch).
+
+> **Atualização (decisão do usuário):** a tela DIVIDIDA foi removida. O Tiptap NÃO é um painel de
+> escrita separado — ele substitui o `contenteditable` DENTRO do frame da própria página Prelo
+> (uma área só). Dois modos no MESMO frame/margens: `editing` (Tiptap visível no frame) e `proof`
+> (`engine-line-layer` do Prelo = exatamente o que vai ao PDF). Ao focar o frame, entra em edição;
+> ao desfocar, o JSON do Tiptap vira `Story.paragraphs` (via `tiptap-adapter`) e o Prelo repagina,
+> voltando à prova no mesmo lugar. Componentes: `TiptapFrameEditor.tsx` (no frame) + `EditablePage.tsx`
+> (alterna editing/proof). `EditorShell` voltou ao layout normal (sidebar + workspace; zoom; export).
 
 Fluxo implementado (a regra absoluta foi respeitada):
 
 ```
-Tiptap JSON -> tiptap-adapter -> Story.paragraphs -> paginateStory -> Preview Prelo -> documentToPdf
+Tiptap JSON -> tiptap-adapter -> Story.paragraphs -> paginateStory -> Preview Prelo (no frame) -> documentToPdf
 ```
 
 O `src/engine` NÃO foi tocado. Tiptap só descreve texto + formatação inline/parágrafo. Páginas,
 frames, imagens, text-wrap, sangria, preflight e PDF continuam 100% do Prelo. Imagens NÃO são
-convertidas (continuam `ImageFrame`).
+convertidas (continuam `ImageFrame`). Preview final e PDF continuam no mesmo lugar onde se escreve.
 
 ## Texto de teste
 
@@ -67,19 +74,26 @@ quebra sendo FORÇADA indevidamente no fluxo de tokens. Investigar tokenizer/sha
 
 ## Recommendation
 
-**Recommendation: delay; keep branch for further testing.**
+**Decisão tomada (a pedido do usuário): ADOTAR o Tiptap como superfície de escrita — mas DENTRO do
+frame da página (uma área só), não como editor separado.** Já implementado e verificado nesta branch:
+escrita no frame, conversão determinística, Prelo continua sendo a prova (preview) e o produto (PDF),
+sem segunda fonte da verdade. Permanece na branch `spike/tiptap-editor`, sem merge na `main` sem ok.
 
-O spike é positivo: o Tiptap funciona bem como instrumento de escrita, a conversão é determinística e
-testada, e o Prelo continua sendo a prova (preview) e o produto (PDF), sem segunda fonte da verdade.
-Porém NÃO adotar/mesclar agora, por dois motivos objetivos:
+**Ressalva que continua valendo (independente do editor):**
 
 1. **O defeito visível mais grave é do MOTOR, não do editor.** O spike provou que "nomes" isolado
-   acontece com input limpo do Tiptap. Adotar Tiptap não resolve isso; corrigir o line-breaker do
-   Prelo é a prioridade maior e independe do Tiptap.
-2. **O plano-mestre (`docs/superpowers/plans/2026-06-21-prelo-engine-finalization-master-plan.md`)
-   sequencia o contrato Preview=PDF + quality gate ANTES de qualquer migração de editor.** Ligar o
-   Tiptap como editor de produção antes desses gates adiciona dependência/segundo modelo de conteúdo
-   sobre uma base ainda não estabilizada.
+   acontece com input LIMPO do Tiptap (ver repro acima). Trocar/embutir o editor NÃO conserta isso —
+   **corrigir o line-breaker do Prelo é a prioridade nº 1** e independe do Tiptap.
+2. **O plano-mestre** (`docs/superpowers/plans/2026-06-21-prelo-engine-finalization-master-plan.md`)
+   sequencia o contrato Preview=PDF + quality gate. O Tiptap-no-frame respeita isso (o motor segue
+   sendo a prova), mas a maturação editorial (incl. o bug acima) deve continuar em paralelo.
+
+**Limitações conhecidas do estado atual (in-frame):** durante a edição o que se vê é o layout NATIVO
+do navegador (Tiptap), e só ao desfocar aparece a prova do Prelo (= PDF) — ainda não é WYSIWYG
+caractere-a-caractere durante a digitação. Marks (bold/italic/underline) sobrevivem na conversão mas
+ainda não são mapeados para `CharacterStyle`/estilos (não renderizam no PDF ainda). Edição é por
+trecho de página (modelo de chunks atual). Próximo passo de integração: mapear marks->estilos,
+preservar headings no round-trip, e o gate de fidelidade preview/PDF.
 
 Ordem recomendada: (a) corrigir o bug de quebra de linha do motor (repro acima); (b) landar o gate
 Preview=PDF; (c) então adotar o Tiptap com um plano de integração próprio (mapeamento de toolbar,
