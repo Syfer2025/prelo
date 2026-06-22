@@ -8,23 +8,37 @@ const editablePageSource = readFileSync(
   join(process.cwd(), 'src/editor/components/EditablePage.tsx'),
   'utf8'
 );
+const frameEditorSource = readFileSync(
+  join(process.cwd(), 'src/editor/components/TiptapFrameEditor.tsx'),
+  'utf8'
+);
 
-function cssRule(selector: string): string {
-  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const match = productCss.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`, 'm'));
-  return match?.[1] ?? '';
-}
-
-describe('editor typing latency guard', () => {
-  it('keeps native typed text visible while the engine layer waits for re-pagination', () => {
-    const editableEditingRule = cssRule('.editable-frame.has-engine-layout.is-editing');
-    const engineEditingRule = cssRule('.editor-page-frame.is-editing .engine-line-layer');
-
+describe('escrita no próprio frame (Tiptap dentro da página Prelo)', () => {
+  it('alterna editing (Tiptap) e proof (engine-line) no MESMO frame, mutuamente exclusivos', () => {
     expect(editablePageSource).toContain('isEditing');
     expect(editablePageSource).toContain('setIsEditing(true)');
     expect(editablePageSource).toContain('setIsEditing(false)');
-    expect(editableEditingRule).toContain('color: var(--editable-text-color');
-    expect(editableEditingRule).not.toContain('transparent');
-    expect(engineEditingRule).toContain('opacity: 0');
+    // editing = Tiptap no frame; proof = camada de linhas do motor (= PDF)
+    expect(editablePageSource).toContain('TiptapFrameEditor');
+    expect(editablePageSource).toContain('engine-line-layer');
+    // exclusivos: o Tiptap aparece no ramo isEditing; a prova no ramo else (depois no fonte)
+    const editingIndex = editablePageSource.indexOf('TiptapFrameEditor');
+    const proofIndex = editablePageSource.indexOf('engine-line-layer');
+    expect(editingIndex).toBeGreaterThan(-1);
+    expect(proofIndex).toBeGreaterThan(editingIndex);
+  });
+
+  it('ao desfocar, o Tiptap converte para texto do Prelo e dispara commit (repaginação)', () => {
+    expect(frameEditorSource).toContain('onCommitText');
+    expect(frameEditorSource).toContain('tiptapJsonToPreloParagraphs');
+    expect(frameEditorSource).toMatch(/onBlur|handleBlur/);
+    // EditablePage liga o commit do Tiptap ao onInput + onCommit do Prelo.
+    expect(editablePageSource).toMatch(/onCommitText=\{[\s\S]*onInput\([\s\S]*onCommit\(\)/);
+  });
+
+  it('o editor Tiptap não tem largura própria: ocupa o frame (CSS inset:0, absolute)', () => {
+    const wrap = productCss.match(/\.tiptap-frame-wrap\s*\{([^}]*)\}/)?.[1] ?? '';
+    expect(wrap).toContain('position: absolute');
+    expect(wrap).toContain('inset: 0');
   });
 });

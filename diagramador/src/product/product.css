@@ -300,38 +300,20 @@
   top: 0;
   white-space: pre;
 }
-.editable-frame {
-  position: relative;
+/* Camada transparente sobre o frame (modo proof): clicar/focar entra em edição Tiptap. */
+.editable-enter {
+  position: absolute;
+  inset: 0;
   z-index: 2;
-  width: 100%;
-  height: 100%;
   outline: none;
-  color: #1f2d44;
-  white-space: pre-wrap;
-  word-wrap: break-word;
-  overflow: hidden;
   cursor: text;
 }
-.editable-frame.has-engine-layout {
-  color: transparent !important;
-  caret-color: #1f2d44;
-}
-.editor-page-frame.is-editing .engine-line-layer {
-  opacity: 0;
-}
-.editable-frame.has-engine-layout.is-editing {
-  color: var(--editable-text-color, #1f2d44) !important;
-}
-.editable-frame:empty::before {
+.editable-enter[data-placeholder]::before {
   content: attr(data-placeholder);
-  color: #b7bcc4;
-}
-.editable-frame.has-engine-layout:empty::before {
   color: rgba(31, 45, 68, 0.42);
 }
-.editable-frame > div {
-  margin-top: var(--space-before, 0);
-  margin-bottom: var(--space-after, 0);
+.editor-page-frame.is-editing {
+  outline-color: rgba(47, 111, 208, 0.75);
 }
 
 /* ── Stubs de telas futuras ───────────────────────────────── */
@@ -343,56 +325,21 @@
   color: #e8eaed;
 }
 
-/* ── SPIKE Tiptap (camada de escrita) — isolado atrás de USE_TIPTAP_SPIKE ───── */
-.tiptap-writing-surface {
-  min-height: 100%;
+/* ── SPIKE Tiptap: editor DENTRO do frame da página (modo editing) ──────────── */
+/* Sem largura própria — preenche o frame/margens da página Prelo. */
+.tiptap-frame-wrap {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  overflow: hidden;
+}
+.tiptap-frame-wrap .tiptap-frame-editor {
   outline: none;
-  color: #1f2d44;
-  font-family: "Crimson Text", Georgia, serif;
-  font-size: 15px;
-  line-height: 1.5;
+  height: 100%;
 }
-
-.tiptap-writing-surface p {
-  margin: 0 0 12px;
-  text-align: justify;
+.tiptap-frame-wrap .tiptap-frame-editor p {
+  margin: 0 0 var(--space-after, 0);
 }
-
-.tiptap-writing-surface h1,
-.tiptap-writing-surface h2,
-.tiptap-writing-surface h3 {
-  margin: 0 0 14px;
-  color: #1f2d44;
-}
-
-/* Split do spike: escrita (Tiptap) à esquerda, prova paginada (Prelo) à direita. */
-.tiptap-spike-pane {
-  display: flex;
-  flex: 1 1 auto;
-  min-height: 0;
-  width: 100%;
-}
-.tiptap-spike-write {
-  flex: 1 1 50%;
-  min-width: 0;
-  overflow: auto;
-  background: #ffffff;
-  padding: 32px 40px;
-}
-.tiptap-spike-write .spike-label,
-.tiptap-spike-preview .spike-label {
-  display: block;
-  font-size: 11px;
-  letter-spacing: 0.6px;
-  text-transform: uppercase;
-  color: #9aa0aa;
-  margin-bottom: 12px;
-}
-.tiptap-spike-preview {
-  flex: 1 1 50%;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  border-left: 1px solid #2a2d35;
-  background: #2b2e36;
+.tiptap-frame-wrap .tiptap-frame-editor:focus {
+  outline: none;
 }

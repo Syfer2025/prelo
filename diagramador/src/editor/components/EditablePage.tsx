@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import type { FrameLayout } from '../../engine';
 import type { Frame, Page, ParagraphStyle } from '../../model/types';
+import TiptapFrameEditor from './TiptapFrameEditor';
 
 interface EditablePageProps {
   page: Page;
@@ -13,10 +14,11 @@ interface EditablePageProps {
 }
 
 /**
- * Página branca com um frame de texto editável diretamente (contenteditable).
- * IMPORTANTE: usa layout NATIVO do navegador para a digitação — não é o motor.
- * O conteúdo é sincronizado quando o trecho daquela página muda no estado puro
- * (ex.: colagem longa redistribuída entre páginas, undo/redo ou load).
+ * Página física do Prelo com escrita DIRETA no próprio frame — uma área só.
+ * Dois modos no MESMO frame/margens:
+ *  - proof  (padrão): a `engine-line-layer` do Prelo (= exatamente o que vai para o PDF);
+ *  - editing (ao focar): o Tiptap dentro do frame, sem largura própria.
+ * Ao desfocar, o Tiptap converte JSON -> texto e o Prelo repagina (a prova volta a aparecer).
  */
 export default function EditablePage({
   page,
@@ -27,16 +29,9 @@ export default function EditablePage({
   onInput,
   onCommit,
 }: EditablePageProps) {
-  const ref = useRef<HTMLDivElement>(null);
   const [isEditing, setIsEditing] = useState(false);
-
-  useEffect(() => {
-    if (isEditing) return;
-    const el = ref.current;
-    if (el && el.textContent !== text) el.textContent = text;
-  }, [isEditing, text]);
-
   const cs = style.characterStyle;
+  const isEmpty = text.trim().length === 0;
 
   return (
     <div className="editor-page" style={{ width: page.width, height: page.height }}>
@@ -44,78 +39,85 @@ export default function EditablePage({
         className={`editor-page-frame${isEditing ? ' is-editing' : ''}`}
         style={{ left: frame.x, top: frame.y, width: frame.width, height: frame.height }}
       >
-        {frameLayout ? (
-          <div className="engine-line-layer" aria-hidden="true">
-            {frameLayout.lines.map((line, lineIndex) => {
-              const lineStyle = line.style;
-              return (
-                <div
-                  key={`${line.y}:${lineIndex}:${line.text}`}
-                  className="engine-line"
-                  style={{
-                    left: line.x,
-                    top: line.y,
-                    height: line.height,
-                    fontFamily: `"${lineStyle.fontFamily}", Georgia, serif`,
-                    fontSize: lineStyle.fontSize,
-                    lineHeight: `${line.height}px`,
-                    fontWeight: lineStyle.fontWeight,
-                    fontStyle: lineStyle.fontStyle,
-                    letterSpacing: lineStyle.letterSpacing,
-                    color: lineStyle.color,
-                  }}
-                >
-                  {line.runs && line.runs.length > 0
-                    ? line.runs.map((run, runIndex) => (
-                        // Renderiza RUNS posicionados (mesma fonte da verdade do PDF):
-                        // em linhas justificadas os espaços vêm esticados via run.x, então a
-                        // margem direita fica regular — igual ao que o motor escreve no PDF.
-                        <span
-                          key={`${runIndex}:${run.x}`}
-                          className="engine-run"
-                          style={{ left: run.x }}
-                        >
-                          {run.text}
-                        </span>
-                      ))
-                    : line.text}
-                </div>
-              );
-            })}
-          </div>
-        ) : null}
-        <div
-          ref={ref}
-          className={`editable-frame${frameLayout ? ' has-engine-layout' : ''}${isEditing ? ' is-editing' : ''}`}
-          contentEditable
-          suppressContentEditableWarning
-          spellCheck={false}
-          role="textbox"
-          aria-multiline="true"
-          aria-label="Texto da página"
-          onFocus={() => setIsEditing(true)}
-          onInput={(e) => {
-            setIsEditing(true);
-            onInput(e.currentTarget.innerText);
-          }}
-          onBlur={() => {
-            setIsEditing(false);
-            onCommit();
-          }}
-          data-placeholder="Comece a escrever…"
-          style={{
-            fontFamily: `"${cs.fontFamily}", Georgia, serif`,
-            fontSize: cs.fontSize,
-            lineHeight: style.lineHeight,
-            color: cs.color,
-            ['--editable-text-color' as string]: cs.color,
-            textAlign: style.alignment,
-            textIndent: style.indent,
-            letterSpacing: cs.letterSpacing,
-            ['--space-before' as string]: `${style.spaceBefore}px`,
-            ['--space-after' as string]: `${style.spaceAfter}px`,
-          }}
-        />
+        {isEditing ? (
+          // EDITING: Tiptap ocupa o frame; ao desfocar converte e repagina pelo Prelo.
+          <TiptapFrameEditor
+            chunkText={text}
+            style={style}
+            onCommitText={(committed) => {
+              onInput(committed);
+              onCommit();
+              setIsEditing(false);
+            }}
+          />
+        ) : (
+          <>
+            {/* PROOF: a composição do motor — o que sai no PDF. */}
+            {frameLayout ? (
+              <div className="engine-line-layer" aria-hidden="true">
+                {frameLayout.lines.map((line, lineIndex) => {
+                  const lineStyle = line.style;
+                  return (
+                    <div
+                      key={`${line.y}:${lineIndex}:${line.text}`}
+                      className="engine-line"
+                      style={{
+                        left: line.x,
+                        top: line.y,
+                        height: line.height,
+                        fontFamily: `"${lineStyle.fontFamily}", Georgia, serif`,
+                        fontSize: lineStyle.fontSize,
+                        lineHeight: `${line.height}px`,
+                        fontWeight: lineStyle.fontWeight,
+                        fontStyle: lineStyle.fontStyle,
+                        letterSpacing: lineStyle.letterSpacing,
+                        color: lineStyle.color,
+                      }}
+                    >
+                      {line.runs && line.runs.length > 0
+                        ? line.runs.map((run, runIndex) => (
+                            <span
+                              key={`${runIndex}:${run.x}`}
+                              className="engine-run"
+                              style={{ left: run.x }}
+                            >
+                              {run.text}
+                            </span>
+                          ))
+                        : line.text}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
+            {/* Camada de foco: clicar/focar no frame ativa a edição Tiptap, no mesmo lugar. */}
+            <div
+              className="editable-enter"
+              role="textbox"
+              tabIndex={0}
+              aria-label="Escrever nesta página"
+              data-placeholder={isEmpty ? 'Comece a escrever…' : undefined}
+              onMouseDown={(e) => {
+                // stopPropagation: não deixar o page-scaler (seleção de página) remontar e
+                // perder o foco recém-criado do editor.
+                e.stopPropagation();
+                setIsEditing(true);
+              }}
+              onFocus={() => setIsEditing(true)}
+              style={
+                isEmpty
+                  ? {
+                      fontFamily: `"${cs.fontFamily}", Georgia, serif`,
+                      fontSize: cs.fontSize,
+                      lineHeight: String(style.lineHeight),
+                      color: cs.color,
+                      textAlign: style.alignment,
+                    }
+                  : undefined
+              }
+            />
+          </>
+        )}
       </div>
     </div>
   );
