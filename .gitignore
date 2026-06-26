@@ -14,6 +14,7 @@ diagramador/dist/
 tmp/
 diagramador/tmp/
 *.log
+Arquivo.zip
 
 # TypeScript incremental cache
 *.tsbuildinfo
