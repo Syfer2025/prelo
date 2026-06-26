@@ -39,10 +39,12 @@ import {
   buildPrintExportPreflight,
   canvasPixelRatioForPrintDpi,
   preflightCanvasPrintExport,
-  renderCanvasPrintPdf,
   type CanvasPrintExportReport,
   type PreflightStatus,
 } from '../print-export/canvas-raster-print-export';
+import { PDFDocument } from 'pdf-lib';
+import { dataUrlToBytes, type CanvasPdfPageSize } from '../canvas-editor/canvas-pdf-export';
+import { mmToPt } from '../canvas-editor/prelo-canvas-units';
 import { exportCanvasVectorPdfFromSnapshot } from '../print-export/canvas-vector-pdf-export';
 import {
   BOOK_FONT_FAMILIES,
@@ -686,23 +688,53 @@ export default function CanvasEditorShell({ onBack, onPersistProject }: CanvasEd
   async function handleExportPdf() {
     setExportStatus('generating');
     try {
-      const images = await editorRef.current?.getPageImages(canvasPixelRatioForPrintDpi());
-      if (!images?.length) throw new Error('No page images returned by Canvas Editor');
+      const editor = editorRef.current;
+      if (!editor) throw new Error('Editor não está pronto');
+      const pixelRatio = canvasPixelRatioForPrintDpi();
+      const pageCount = editor.getPageCount();
+      if (pageCount === 0) throw new Error('Nenhuma página para exportar');
 
-      // Mede o preflight antes de montar o PDF para que o painel mostre o
-      // resultado real (DPI/boxes) mesmo quando a exportacao for bloqueada.
-      const report = preflightCanvasPrintExport(images, state.bookLayout);
-      setPrintReport(report);
-      if (!report.isPrintReadyRaster) {
-        console.warn('Preflight bloqueou a exportacao:', report.blockingIssues);
+      // Preflight rápido com a 1ª página para validar DPI
+      const firstDataUrl = await editor.getPageImage(0, pixelRatio);
+      const sampleReport = preflightCanvasPrintExport([firstDataUrl], state.bookLayout);
+      setPrintReport(sampleReport);
+      if (!sampleReport.isPrintReadyRaster) {
+        console.warn('Preflight bloqueou a exportacao:', sampleReport.blockingIssues);
         setExportStatus('error');
         return;
       }
 
-      const { bytes } = await renderCanvasPrintPdf(images, state.bookLayout);
-      if (report.warnings.length > 0) {
-        console.info('Prelo print export warnings:', report.warnings);
+      // Constrói o PDF página por página para evitar estouro de memória
+      const pdf = await PDFDocument.create();
+      pdf.setTitle('Prelo print raster export');
+      pdf.setCreator('Prelo');
+      pdf.setProducer('Prelo Canvas raster print export');
+      pdf.setSubject(`${Math.round(pixelRatio * 96)} DPI raster PDF`);
+
+      const pageWidthPt = mmToPt(state.bookLayout.widthMm);
+      const pageHeightPt = mmToPt(state.bookLayout.heightMm);
+
+      for (let i = 0; i < pageCount; i++) {
+        // Yield à UI a cada 10 páginas para não travar
+        if (i > 0 && i % 10 === 0) {
+          await new Promise((r) => setTimeout(r, 0));
+        }
+        const dataUrl = await editor.getPageImage(i, pixelRatio);
+        const image = await pdf.embedPng(dataUrlToBytes(dataUrl));
+        const page = pdf.addPage([pageWidthPt, pageHeightPt]);
+        page.setMediaBox(0, 0, pageWidthPt, pageHeightPt);
+        page.setTrimBox(0, 0, pageWidthPt, pageHeightPt);
+        page.setBleedBox(0, 0, pageWidthPt, pageHeightPt);
+        page.drawImage(image, {
+          x: 0,
+          y: 0,
+          width: pageWidthPt,
+          height: pageHeightPt,
+        });
       }
+
+      const bytes = await pdf.save({ useObjectStreams: false });
+      console.info(`PDF raster exportado: ${pageCount} página(s)`);
       downloadBytes(`${state.projectName || 'livro'}.pdf`, bytes, 'application/pdf');
       setExportStatus('ready');
     } catch (error) {

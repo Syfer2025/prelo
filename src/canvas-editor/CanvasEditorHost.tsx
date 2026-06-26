@@ -58,6 +58,16 @@ export interface CanvasEditorHandle {
    */
   getLayoutSnapshot(): CanvasLayoutSnapshot | null;
   getPageImages(pixelRatio?: number): Promise<string[]>;
+  /**
+   * Número total de páginas atualmente renderizadas no editor.
+   */
+  getPageCount(): number;
+  /**
+   * Renderiza e retorna uma página específica como data URL.
+   * Preferível a `getPageImages()` para livros com muitas páginas,
+   * pois evita alocar todas as páginas em memória simultaneamente.
+   */
+  getPageImage(index: number, pixelRatio?: number): Promise<string>;
   insertPageBreak(): void;
   insertSeparator(dashArray?: number[]): void;
   insertTable(rows: number, cols: number): void;
@@ -318,6 +328,30 @@ export const CanvasEditorHost = forwardRef<CanvasEditorHandle, CanvasEditorHostP
         const editor = requireEditor(editorRef.current);
         const payload: GetImagePayload = { pixelRatio, mode: EditorMode.PRINT };
         return editor.command.getImage(payload);
+      },
+      getPageCount() {
+        const draw = drawRef.current as Record<string, unknown> | null;
+        const list = draw?.pageList;
+        return Array.isArray(list) ? list.length : 0;
+      },
+      async getPageImage(index: number, pixelRatio = 2) {
+        const draw = drawRef.current as Record<string, unknown> | null;
+        if (!draw) throw new Error('Editor não está pronto');
+        // Aplica pixelRatio (afeta render futuro)
+        if (typeof draw.setPagePixelRatio === 'function') {
+          draw.setPagePixelRatio(pixelRatio);
+        }
+        // Garante que o layout esteja atualizado
+        if (typeof draw.render === 'function') {
+          draw.render({ isLazy: false, isCompute: false, isSetCursor: false, isSubmitHistory: false });
+        }
+        const observer = draw.imageObserver as { allSettled?: () => Promise<void> } | undefined;
+        await observer?.allSettled();
+        const list = draw.pageList;
+        if (!Array.isArray(list)) throw new Error('pageList não disponível');
+        const canvas = list[index] as HTMLCanvasElement | undefined;
+        if (!canvas) throw new Error(`Página ${index} não encontrada`);
+        return canvas.toDataURL();
       },
       insertPageBreak() {
         requireEditor(editorRef.current).command.executePageBreak();
